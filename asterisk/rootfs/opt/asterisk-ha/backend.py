@@ -42,6 +42,8 @@ def endpoint_lines(num, secret, caller, context='from-internal', max_contacts=5,
         'disallow=all',f'allow={codecs}',f'auth={num}',f'aors={num}',
         f'callerid={caller} <{num}>','identify_by=username,auth_username','direct_media=no',
         'rtp_symmetric=yes','force_rport=yes','rewrite_contact=yes',
+        'rtp_keepalive=15','rtp_timeout=30','rtp_timeout_hold=300',
+        'timers=yes','timers_min_se=90','timers_sess_expires=180',
         f'\n[{num}]','type=auth','auth_type=userpass',f'username={num}',f'password={secret}',
         f'\n[{num}]','type=aor',f'max_contacts={max_contacts}','remove_existing=yes','qualify_frequency=30'
     ]
@@ -75,7 +77,8 @@ def render_managed(data):
             f'\n[{name}-auth]','type=auth','auth_type=userpass',f'username={user}',f'password={pwd}',
             f'\n[{name}]','type=aor',f'contact=sip:{host}:{port}',
             f'\n[{name}]','type=endpoint','transport=transport-udp','context=from-trunk','disallow=all',
-            f'allow={DEFAULT_AUDIO_CODECS}',f'outbound_auth={name}-auth',f'aors={name}','direct_media=no'
+            f'allow={DEFAULT_AUDIO_CODECS}',f'outbound_auth={name}-auth',f'aors={name}','direct_media=no',
+            'rtp_symmetric=yes','force_rport=yes','rewrite_contact=yes','rtp_keepalive=15','rtp_timeout=30','rtp_timeout_hold=300','timers=yes'
         ]
 
     ht_enabled=bool(ht.get('enabled',False))
