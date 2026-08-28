@@ -1,7 +1,7 @@
 name: Asterisk 22 PBX + GSM
-version: "0.1.9"
+version: "0.2.0"
 slug: asterisk22_pbx
-description: "Asterisk 22.11 PBX for Home Assistant with PJSIP, HT503 FXS/FXO, SIPcord/Discord, IVR, Home Assistant entities, AMI, ARI, Ingress GUI and optional chan_dongle GSM"
+description: "Asterisk 22.11 PBX for Home Assistant with PJSIP, HT503 FXS/FXO, SIPcord/Discord, IVR audio manager, Home Assistant entities, AMI, ARI, Ingress GUI and optional chan_dongle GSM"
 arch:
   - amd64
   - aarch64
