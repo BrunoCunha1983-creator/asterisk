@@ -117,10 +117,19 @@ def render_sipcord(conf, data):
             'rtp_symmetric=yes\n'
             'force_rport=yes\n'
             'rewrite_contact=yes\n'
+            '; Send comfort-noise RTP regularly so outbound NAT/firewall mappings stay open.\n'
+            'rtp_keepalive=5\n'
+            '; Give the bridge longer than normal remote extensions before declaring media dead.\n'
+            'rtp_timeout=60\n'
+            'rtp_timeout_hold=300\n'
+            'timers=yes\n'
+            'timers_min_se=90\n'
+            'timers_sess_expires=180\n'
             '\n[sipcord]\n'
             'type=aor\n'
             f'contact=sip:{server}:{port}\n'
-            'qualify_frequency=30\n'
+            'qualify_frequency=15\n'
+            'qualify_timeout=3.0\n'
             '\n[sipcord_auth]\n'
             'type=auth\n'
             'auth_type=userpass\n'
@@ -157,6 +166,7 @@ async function sipcord(a){
   let st=s.enabled?await api('api/sipcord-status'):{};
   a.innerHTML=`<div class=card><h2>SIPcord — SIP ↔ Discord</h2>
   <div class=note><b>Ligação correta:</b> trunk PJSIP estático, sem <code>type=registration</code>. O Asterisk envia as chamadas diretamente para o bridge SIPcord e autentica quando o bridge pede credenciais. Por defeito, qualquer extensão <b>15XX</b> vai para o número equivalente configurado no SIPcord.</div>
+  <div class=note><b>Áudio / NAT:</b> SIPcord usa G.711 (ulaw/alaw). O trunk envia RTP keepalive de 5 s para manter o mapeamento NAT aberto. Se o endpoint estiver Reachable mas não houver áudio, confirma o encaminhamento UDP da gama RTP do add-on e desativa SIP ALG no router.</div>
   <div class=row>
     <div><label>Ativar SIPcord</label><select id=scen><option value=0 ${s.enabled?'':'selected'}>Não</option><option value=1 ${s.enabled?'selected':''}>Sim</option></select></div>
     <div><label>Servidor bridge</label><input id=scsrv value="${esc(s.server||'bridge-eu1.sipcord.net')}"></div>
