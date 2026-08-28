@@ -35,6 +35,13 @@ DESCRIPTIONS = (
         value_fn=lambda d: bool((d.get("ht503") or {}).get("reachable")),
     ),
     AsteriskBinaryDescription(
+        key="ht503_fxs",
+        name="HT503 FXS",
+        icon="mdi:phone-classic",
+        device_class=BinarySensorDeviceClass.CONNECTIVITY,
+        value_fn=lambda d: bool(((d.get("ht503") or {}).get("fxs") or {}).get("reachable")),
+    ),
+    AsteriskBinaryDescription(
         key="sipcord",
         name="SIPcord",
         icon="mdi:discord",
@@ -106,6 +113,8 @@ class AsteriskStatusBinarySensor(AsteriskEntity, BinarySensorEntity):
         data = self.coordinator.data or {}
         if self.entity_description.key == "ht503":
             return data.get("ht503") or {}
+        if self.entity_description.key == "ht503_fxs":
+            return ((data.get("ht503") or {}).get("fxs") or {})
         if self.entity_description.key == "sipcord":
             info = dict(data.get("sipcord") or {})
             info.pop("password", None)
