@@ -1,0 +1,23 @@
+{
+  "title": "Asterisk PBX",
+  "config": {
+    "step": {
+      "user": {
+        "title": "Connect to Asterisk PBX",
+        "description": "Connects to the local Asterisk add-on API. Use the Home Assistant host/IP and port 8099.",
+        "data": {
+          "host": "Home Assistant host / IP",
+          "port": "Asterisk API port",
+          "scan_interval": "Update interval (seconds)"
+        }
+      }
+    },
+    "error": {
+      "cannot_connect": "Could not connect to the Asterisk add-on.",
+      "unknown": "Unexpected error."
+    },
+    "abort": {
+      "already_configured": "This Asterisk PBX is already configured."
+    }
+  }
+}
