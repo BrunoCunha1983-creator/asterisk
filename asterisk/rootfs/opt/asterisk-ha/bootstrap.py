@@ -62,18 +62,19 @@ if not pbx.exists():
       'ht503':default_ht503(),
       'sip_trunks':[],
       'gsm_dongles':[],
+      'ivrs':[],
       'routes':{'gsm_prefix':'9','incoming_target':'100'}
     }
     pbx.write_text(json.dumps(data,indent=2))
 else:
-    # v0.1.5 migration: add the dedicated HT503 section without touching
-    # existing extensions/trunks. Old local-ATA trunks remain visible so the
-    # user can deliberately remove/migrate them in the GUI.
+    # Add new managed sections without deleting existing PBX data.
     try:
         data=json.loads(pbx.read_text())
         changed=False
         if 'ht503' not in data:
             data['ht503']=default_ht503(); changed=True
+        if 'ivrs' not in data or not isinstance(data.get('ivrs'), list):
+            data['ivrs']=[]; changed=True
         if changed: pbx.write_text(json.dumps(data,indent=2,ensure_ascii=False))
     except Exception:
         pass
