@@ -55,8 +55,6 @@ jobs:
           import backend
           import server_entry
 
-          # Start with HT503 FXS enabled but no generic extension entry. The
-          # normalizer must create extension 200 automatically.
           data = {
               'extensions': [],
               'ht503': {
@@ -78,8 +76,6 @@ jobs:
           assert ext['secret'] == 'test-secret'
           assert ext['callerid'] == 'Tel Interno'
 
-          # Verify the exact managed PJSIP output contains a real endpoint,
-          # auth and AOR for the FXS extension.
           with TemporaryDirectory() as d:
               backend.CONF = Path(d)
               backend.render_managed(data)
@@ -108,6 +104,38 @@ jobs:
 
       - name: Check final JavaScript syntax
         run: node --check /tmp/asterisk-ui-final.js
+
+      - name: Test Asterisk 22 PJSIP reload compatibility
+        env:
+          PYTHONPATH: asterisk/rootfs/opt/asterisk-ha
+        run: |
+          python - <<'PY'
+          import server_entry
+
+          calls = []
+          def success(command):
+              calls.append(command)
+              return {'ok': True, 'code': 0, 'output': "Module 'res_pjsip.so' reloaded successfully."}
+
+          server_entry._base_ast = success
+          result = server_entry.ast_compat('pjsip reload')
+          assert result['ok']
+          assert calls == ['module reload res_pjsip.so']
+          assert '$ module reload res_pjsip.so' in result['output']
+
+          calls = []
+          def fallback(command):
+              calls.append(command)
+              if command == 'module reload res_pjsip.so':
+                  return {'ok': True, 'code': 0, 'output': 'No such module'}
+              return {'ok': True, 'code': 0, 'output': 'Reloading Asterisk modules...'}
+
+          server_entry._base_ast = fallback
+          result = server_entry.ast_compat('pjsip reload')
+          assert result['ok']
+          assert calls == ['module reload res_pjsip.so', 'core reload']
+          assert 'Fallback: $ core reload' in result['output']
+          PY
 
       - name: Test IVR generator
         env:
@@ -165,4 +193,5 @@ jobs:
           grep -q 'server_entry.py' asterisk/rootfs/usr/local/bin/asterisk-ha-start
           grep -q '/share/asterisk-ivr' asterisk/rootfs/usr/local/bin/asterisk-ha-start
           grep -q 'fxs_secret' asterisk/rootfs/opt/asterisk-ha/ht503.py
+          grep -q 'module reload res_pjsip.so' asterisk/rootfs/opt/asterisk-ha/server_entry.py
           grep -q 'asterisk_pbx' custom_components/asterisk_pbx/manifest.json
