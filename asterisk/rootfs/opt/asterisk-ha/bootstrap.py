@@ -2,6 +2,8 @@
 import json, os, re, secrets
 from pathlib import Path
 
+from nat import apply_nat
+
 CONF=Path('/config/asterisk'); STATE=Path('/config/state'); OPT=Path('/data/options.json')
 STATE.mkdir(parents=True, exist_ok=True)
 try: options=json.loads(OPT.read_text())
@@ -25,6 +27,17 @@ for p in CONF.glob('*.conf'):
     text=p.read_text(errors='ignore'); old=text
     for k,v in repls.items(): text=text.replace(k,v)
     if text!=old: p.write_text(text)
+
+# Configure PJSIP/RTP NAT after template substitutions. This keeps LAN media on
+# the private address while advertising the public address to remote phones.
+try:
+    nat_state=apply_nat(CONF, options)
+    print('[NAT] local_ip=%s local_net=%s external=%s source=%s RTP=%s-%s' % (
+        nat_state.get('local_ip',''), nat_state.get('local_net',''),
+        nat_state.get('external_address',''), nat_state.get('external_source',''),
+        nat_state.get('rtp_start',''), nat_state.get('rtp_end','')))
+except Exception as e:
+    print(f'[NAT] unable to apply automatic NAT settings: {e}')
 
 modules=CONF/'modules.conf'
 if modules.exists():
