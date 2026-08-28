@@ -11,6 +11,7 @@ A pasta [`asterisk/`](asterisk/) contém o Add-on com:
 - HT503 FXS/FXO
 - SIPcord / Discord
 - IVR gerido pela GUI
+- gestão de gravações IVR pela GUI
 - AMI
 - ARI + WebSocket
 - Ingress GUI
@@ -42,7 +43,21 @@ No separador **IVR** da interface Web pode criar vários menus de voz. Cada IVR 
 
 A extensão de entrada permite reutilizar o IVR em qualquer rota. Exemplo: se o IVR Principal usa a extensão `600`, configure `600` como destino de chamadas recebidas do HT503 ou GSM.
 
-Os prompts são identificadores de som Asterisk sem extensão. Exemplo: um ficheiro instalado como `custom/ivr-main.wav` é configurado na GUI como `custom/ivr-main`.
+#### Gravações do IVR
+
+A partir da versão `0.2.0`, a própria GUI gere os ficheiros de áudio personalizados:
+
+- **Upload WAV** pela interface Web
+- normalização automática para WAV PCM mono, 16-bit, 8 kHz
+- reprodução diretamente no browser
+- teste do prompt fazendo tocar uma extensão PJSIP
+- gravação do prompt através de um telefone PJSIP
+- substituição e remoção de gravações
+- armazenamento persistente em `/share/asterisk-ivr`
+
+Para gravar pelo telefone, cada IVR recebe um código automático `*77 + extensão do IVR`. Exemplo: um IVR na extensão `600` usa o código `*77600`. A GUI pode originar a chamada automaticamente para uma extensão PJSIP; depois de atender, fale após o beep e carregue `#` para terminar. A gravação pode também ser iniciada marcando o código manualmente.
+
+Os prompts geridos aparecem como identificadores `custom/...`, por exemplo `custom/ivr-main`. Os WAV correspondentes ficam persistentes em `/share/asterisk-ivr` e são disponibilizados ao Asterisk através do diretório de sons personalizados.
 
 ## 2. Integração Home Assistant / HACS
 
