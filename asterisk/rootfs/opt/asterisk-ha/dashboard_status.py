@@ -2,11 +2,7 @@
 
 
 def augment_index(index):
-    """Add live, separated status panels to the Dashboard.
-
-    Uses the existing /api/ha-state snapshot so the browser does not need to
-    issue one Asterisk CLI request per extension/device.
-    """
+    """Add live, separated status panels to the Dashboard using /api/ha-state."""
     if 'function dashboardStatusCard(' in index:
         return index
 
@@ -24,7 +20,6 @@ def augment_index(index):
 '''
 
     js = r'''
-<script>
 function dashboardStatusBadge(enabled,reachable,status){
   if(enabled===false) return ['DESATIVADO','disabled'];
   if(reachable===true) return ['REACHABLE','online'];
@@ -60,33 +55,15 @@ async function dashboard(a){
     <div class=card><div class=sub>IVR</div><div class=big>${h.ivrs_enabled||0}</div><div class=sub>Canais em IVR: ${h.ivr_active_channels||0}</div></div>
     <div class=card><div class=sub>Dongles GSM</div><div class=big>${h.gsm_dongles_connected||0}/${h.gsm_dongles_total||0}</div><div class=sub>Ligados / detetados</div></div>
   </div>
-
-  <div class="card status-section">
-    <h2>Extensões PJSIP</h2>
-    <div class=status-summary><span class=pill>Reachable: ${h.extensions_registered||0}</span><span class=pill>Offline: ${h.extensions_unregistered||0}</span><span class=pill>Total: ${h.extensions_total||0}</span></div>
-    <div class=status-grid>${extCards}</div>
-  </div>
-
-  <div class="card status-section">
-    <h2>Grandstream HT503</h2>
-    <div class=status-grid>${fxsCard}${fxoCard}</div>
-  </div>
-
-  <div class="card status-section">
-    <h2>SIPcord</h2>
-    <div class=status-grid>${scCard}</div>
-  </div>
-
+  <div class="card status-section"><h2>Extensões PJSIP</h2><div class=status-summary><span class=pill>Reachable: ${h.extensions_registered||0}</span><span class=pill>Offline: ${h.extensions_unregistered||0}</span><span class=pill>Total: ${h.extensions_total||0}</span></div><div class=status-grid>${extCards}</div></div>
+  <div class="card status-section"><h2>Grandstream HT503</h2><div class=status-grid>${fxsCard}${fxoCard}</div></div>
+  <div class="card status-section"><h2>SIPcord</h2><div class=status-grid>${scCard}</div></div>
   <div class=actions><button class="btn primary" onclick="cmd('core reload')">Reload Asterisk</button><button class=btn onclick="cmd('pjsip reload')">Reload PJSIP</button><button class=btn onclick="cmd('module reload chan_dongle.so')">Reload chan_dongle</button><button class=btn onclick="dashboard(E('#app'))">Atualizar estados</button></div>`;
-
   clearTimeout(window.__asteriskDashboardTimer);
   if(current==='Dashboard') window.__asteriskDashboardTimer=setTimeout(()=>{if(current==='Dashboard') dashboard(E('#app'))},15000);
 }
-</script>
 '''
 
-    # CSS can be injected before </head>; the second dashboard() declaration is
-    # appended after the original script and therefore becomes the active one.
     index = index.replace('</head>', css + '</head>')
-    index = index.replace('</body>', js + '</body>')
+    index = index.replace('</script>', js + '</script>', 1)
     return index
