@@ -34,7 +34,8 @@ done
 python3 "$APP/bootstrap.py"
 
 # Keep the UI available even if Asterisk fails; diagnostics can then be used.
-python3 "$APP/server.py" &
+# server_entry.py applies the HT503 FXS/FXO module over the base SIPcord/IVR server.
+python3 "$APP/server_entry.py" &
 UI_PID=$!
 
 VERBOSE="$(python3 - <<'PY'
