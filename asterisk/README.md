@@ -9,11 +9,12 @@ Home Assistant App/Add-on containing Asterisk 22.11.0 and an Ingress management 
 - AMI and ARI enabled with generated credentials
 - Active channels/endpoints and diagnostics
 - Queue, ConfBridge, voicemail, MixMonitor/recording-ready modules
-- CDR/CEL configuration foundation
-- Optional Huawei-compatible `chan_dongle`
+- CDR CSV and CEL event logging
+- Call parking (700, spaces 701-720)
+- Optional Huawei-compatible `chan_dongle`, controlled by the app option
 - USB/UART/udev access without Docker `full_access`
 - GSM modem detection, SMS and USSD from the Ingress UI
-- Persistent configuration under the app's `addon_config` directory
+- Persistent configuration under the app's `app_config` directory
 - `/share/asterisk-recordings` for recordings
 
 ## Hardware note
@@ -22,8 +23,8 @@ Home Assistant App/Add-on containing Asterisk 22.11.0 and an Ingress management 
 
 ## First test
 
-1. Install the local app/add-on.
-2. Start it and open **Asterisk PBX** from Ingress.
-3. Confirm Dashboard reports Asterisk ONLINE.
-4. Add a PJSIP extension and save.
-5. For GSM, connect the modem, open **GSM / chan_dongle**, inspect the detected USB serial interfaces and create `dongle0`.
+1. Install/update the app and start it.
+2. Open **Asterisk PBX** from Ingress and confirm Dashboard reports Asterisk ONLINE.
+3. Add the PJSIP extensions used by your phones and save/apply.
+4. For GSM, connect the modem, open **GSM / chan_dongle**, inspect the detected USB serial interfaces and create `dongle0`.
+5. In **Diagnóstico**, confirm `chan_dongle.so` is loaded and inspect `dongle show devices`.

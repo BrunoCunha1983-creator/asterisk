@@ -56,7 +56,6 @@ RUN ./configure --with-pjproject-bundled --with-jansson-bundled \
     && make -j"$(nproc)" \
     && make install DESTDIR=/stage
 
-# chan_dongle is built directly against the exact Asterisk 22.11.0 headers.
 RUN git clone "$CHAN_DONGLE_REPO" /src/chan_dongle \
     && cd /src/chan_dongle \
     && git checkout "$CHAN_DONGLE_REF" \
@@ -71,23 +70,18 @@ FROM debian:bookworm-slim
 ENV DEBIAN_FRONTEND=noninteractive
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates python3 curl jq usbutils usb-modeswitch usb-modeswitch-data udev \
-    libedit2 libxml2 libxslt1.1 liburiparser1 libsqlite3-0 libuuid1 libssl3 libncurses6 libcurl4 libsrtp2-1 \
-    libopus0 libspeex1 libspeexdsp1 libgsm1 libogg0 libvorbis0a libvorbisenc2 libvorbisfile3 libnewt0.52 \
+    libedit2 libxml2 libxslt1.1 libsqlite3-0 libuuid1 libssl3 libncurses6 libcurl4 libsrtp2-1 \
+    libopus0 libspeex1 libspeexdsp1 libgsm1 libogg0 libvorbis0a libvorbisenc2 libvorbisfile3 \
+    liburiparser1 libnewt0.52 \
     && rm -rf /var/lib/apt/lists/*
 
-# Do not copy /stage wholesale. Asterisk's DESTDIR contains /var/run as a
-# directory while Debian bookworm uses /var/run -> /run, which causes BuildKit
-# to fail with "cannot copy to non-directory". Copy only runtime payloads.
 COPY --from=builder /stage/usr/ /usr/
 COPY --from=builder /stage/var/lib/asterisk/ /var/lib/asterisk/
 COPY rootfs/ /
 
-# Fail the image build immediately if Asterisk or any module has an unresolved
-# shared-library dependency. This prevents a successful Docker build followed
-# by an app that crashes on first start.
 RUN set -eu; \
     chmod +x /usr/local/bin/asterisk-ha-start; \
-    mkdir -p /config /share/asterisk-recordings /var/log/asterisk /var/spool/asterisk /run/asterisk; \
+    mkdir -p /config /share/asterisk-recordings /var/log/asterisk /var/log/asterisk/cdr-csv /var/log/asterisk/cdr-custom /var/log/asterisk/cel-custom /var/spool/asterisk /run/asterisk; \
     missing="$( { ldd /usr/sbin/asterisk; find /usr/lib/asterisk/modules -type f -name '*.so' -exec ldd {} \; ; } 2>/dev/null | grep 'not found' || true )"; \
     if [ -n "$missing" ]; then echo "Unresolved runtime libraries:"; echo "$missing"; exit 1; fi; \
     /usr/sbin/asterisk -V

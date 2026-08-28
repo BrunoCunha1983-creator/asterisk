@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-import json, os, secrets
+import json, os, re, secrets
 from pathlib import Path
 
 CONF=Path('/config/asterisk'); STATE=Path('/config/state'); OPT=Path('/data/options.json')
@@ -26,6 +26,27 @@ for p in CONF.glob('*.conf'):
     old=text
     for k,v in repls.items(): text=text.replace(k,v)
     if text!=old: p.write_text(text)
+
+# Keep the chan_dongle app option authoritative even on upgrades where the
+# persistent modules.conf was created by an older version of the app.
+modules=CONF/'modules.conf'
+if modules.exists():
+    lines=modules.read_text(errors='ignore').splitlines()
+    lines=[line for line in lines if not re.match(r'^\s*(?:load|noload)\s*=>\s*chan_dongle\.so\s*$', line, re.I)]
+    if not any(re.match(r'^\s*noload\s*=>\s*chan_sip\.so\s*$', line, re.I) for line in lines):
+        lines.append('noload => chan_sip.so')
+    lines.append(('load' if options.get('chan_dongle', True) else 'noload') + ' => chan_dongle.so')
+    modules.write_text('\n'.join(lines).rstrip()+'\n')
+
+# v0.1.4 migration: cdr_csv needs a [csv] section. Preserve any existing CDR
+# settings and only append the missing backend configuration.
+cdr=CONF/'cdr.conf'
+if cdr.exists():
+    text=cdr.read_text(errors='ignore')
+    if not re.search(r'^\s*\[csv\]\s*$', text, re.I|re.M):
+        with cdr.open('a') as f:
+            if text and not text.endswith('\n'): f.write('\n')
+            f.write('\n[csv]\nusegmtime=no\nloguniqueid=yes\nloguserfield=yes\naccountlogs=yes\nnewcdrcolumns=yes\n')
 
 pbx=STATE/'pbx.json'
 if not pbx.exists():
