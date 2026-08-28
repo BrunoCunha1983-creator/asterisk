@@ -7,13 +7,15 @@ import urllib.request
 from pathlib import Path
 
 
+NAT_STATUS = Path('/config/state/nat.json')
 DEFAULT_NETWORK = {
     'external_address': '',
+    'auto_external': True,
     'local_nets': [],
     'auto_local_nets': True,
-    'rtp_keepalive': 10,
+    'rtp_keepalive': 15,
     'rtp_timeout': 30,
-    'rtp_timeout_hold': 120,
+    'rtp_timeout_hold': 300,
     'session_timers': True,
 }
 
@@ -55,7 +57,7 @@ def detect_local_networks():
 
 
 def detect_public_address():
-    """Best-effort public IPv4 discovery, used only when the GUI asks for it."""
+    """Best-effort public IPv4 discovery, used by auto mode and the GUI."""
     urls = (
         'https://api.ipify.org',
         'https://checkip.amazonaws.com',
@@ -70,6 +72,19 @@ def detect_public_address():
                 return str(ip)
         except Exception:
             continue
+    return ''
+
+
+def _nat_status_external():
+    """Reuse the public address already detected by bootstrap/nat.py."""
+    try:
+        data = json.loads(NAT_STATUS.read_text())
+        value = str(data.get('external_address') or '').strip()
+        if value:
+            ipaddress.ip_address(value)
+            return value
+    except Exception:
+        pass
     return ''
 
 
@@ -115,7 +130,16 @@ def ensure_network_state(data):
     net = dict(DEFAULT_NETWORK)
     net.update(current)
 
+    net['auto_external'] = bool(net.get('auto_external', True))
     net['external_address'] = _normalise_external(net.get('external_address'))
+    if net['auto_external']:
+        detected = _nat_status_external()
+        if not detected and not net['external_address']:
+            detected = detect_public_address()
+        if detected and detected != net['external_address']:
+            net['external_address'] = detected
+            changed = True
+
     net['auto_local_nets'] = bool(net.get('auto_local_nets', True))
     net['local_nets'] = _normalise_nets(net.get('local_nets'))
     if net['auto_local_nets'] and not net['local_nets']:
@@ -123,9 +147,9 @@ def ensure_network_state(data):
         if detected:
             net['local_nets'] = detected
             changed = True
-    net['rtp_keepalive'] = _clamp_int(net.get('rtp_keepalive'), 10, 0, 120)
+    net['rtp_keepalive'] = _clamp_int(net.get('rtp_keepalive'), 15, 0, 120)
     net['rtp_timeout'] = _clamp_int(net.get('rtp_timeout'), 30, 0, 600)
-    net['rtp_timeout_hold'] = _clamp_int(net.get('rtp_timeout_hold'), 120, 0, 1800)
+    net['rtp_timeout_hold'] = _clamp_int(net.get('rtp_timeout_hold'), 300, 0, 1800)
     net['session_timers'] = bool(net.get('session_timers', True))
 
     if current != net:
@@ -147,10 +171,13 @@ def render_transport_nat(conf, data):
     in_transport = False
     inserted = False
 
-    managed_keys = ('external_media_address=', 'external_signaling_address=', 'local_net=')
+    managed_keys = (
+        'external_media_address=', 'external_signaling_address=',
+        'external_signaling_port=', 'local_net=', 'symmetric_transport='
+    )
 
     def managed_lines():
-        result = ['; NAT MANAGED BY ASTERISK HA GUI']
+        result = ['; NAT MANAGED BY ASTERISK HA GUI', 'symmetric_transport=yes']
         ext = net.get('external_address', '')
         if ext:
             result += [f'external_media_address={ext}', f'external_signaling_address={ext}']
@@ -165,11 +192,24 @@ def render_transport_nat(conf, data):
             inserted = False
             out.append(line)
             continue
+
+        # Includes end the transport body for our purposes. NAT options must be
+        # emitted before #include pjsip_gui.conf, otherwise they may attach to
+        # the last category parsed from the included file.
+        if in_transport and stripped.lower().startswith('#include'):
+            if not inserted:
+                out.extend(managed_lines())
+                inserted = True
+            in_transport = False
+            out.append(line)
+            continue
+
         if in_transport and re.match(r'^\[[^]]+\]\s*$', stripped):
             if not inserted:
                 out.extend(managed_lines())
                 inserted = True
             in_transport = False
+
         if in_transport:
             low = stripped.lower()
             if low == '; nat managed by asterisk ha gui' or any(low.startswith(k) for k in managed_keys):
@@ -206,11 +246,12 @@ async function networkPage(a){
   a.innerHTML=`<div class=card><h2>Rede / NAT / RTP</h2>
   <div class=note><b>Para extensões fora da LAN:</b> o Asterisk tem de anunciar o endereço público no SDP e o router tem de encaminhar SIP e a gama RTP para este Home Assistant. O timeout RTP também termina chamadas remotas que desapareçam sem enviar BYE.</div>
   <div class=row>
-    <div><label>Endereço público / DDNS</label><input id=netext value="${esc(n.external_address||'')}" placeholder="pbx.exemplo.pt ou 203.0.113.10"></div>
+    <div><label>IP público automático</label><select id=netextauto><option value=1 ${n.auto_external!==false?'selected':''}>Sim</option><option value=0 ${n.auto_external===false?'selected':''}>Não</option></select></div>
+    <div><label>Endereço público / DDNS</label><input id=netext value="${esc(n.external_address||'')}" placeholder="pbx.exemplo.pt ou IP público"></div>
     <div><label>Detetar redes locais automaticamente</label><select id=netauto><option value=1 ${n.auto_local_nets!==false?'selected':''}>Sim</option><option value=0 ${n.auto_local_nets===false?'selected':''}>Não</option></select></div>
-    <div><label>RTP keepalive (s)</label><input id=netkeep type=number min=0 max=120 value="${esc(n.rtp_keepalive??10)}"></div>
+    <div><label>RTP keepalive (s)</label><input id=netkeep type=number min=0 max=120 value="${esc(n.rtp_keepalive??15)}"></div>
     <div><label>RTP timeout chamada (s)</label><input id=nettimeout type=number min=0 max=600 value="${esc(n.rtp_timeout??30)}"></div>
-    <div><label>RTP timeout em hold (s)</label><input id=nethold type=number min=0 max=1800 value="${esc(n.rtp_timeout_hold??120)}"></div>
+    <div><label>RTP timeout em hold (s)</label><input id=nethold type=number min=0 max=1800 value="${esc(n.rtp_timeout_hold??300)}"></div>
     <div><label>Session timers SIP</label><select id=nettimers><option value=1 ${n.session_timers!==false?'selected':''}>Ativos</option><option value=0 ${n.session_timers===false?'selected':''}>Desativos</option></select></div>
   </div>
   <div><label>Redes locais (uma por linha)</label><textarea id=netlocals style="min-height:110px">${esc(nets)}</textarea></div>
@@ -226,6 +267,7 @@ async function detectNetwork(){
 async function saveNetwork(){
   pbx.network={
     ...(pbx.network||{}),
+    auto_external:E('#netextauto').value==='1',
     external_address:E('#netext').value.trim(),
     auto_local_nets:E('#netauto').value==='1',
     local_nets:E('#netlocals').value.split(/[,;\n ]+/).filter(Boolean),
