@@ -79,7 +79,9 @@ jobs:
           PY
 
       - name: Check final JavaScript syntax
-        run: node --check /tmp/asterisk-ui-final.js
+        run: |
+          nl -ba /tmp/asterisk-ui-final.js | sed -n '8,24p'
+          node --check /tmp/asterisk-ui-final.js
 
       - name: Test IVR generator
         env:
