@@ -28,6 +28,7 @@ jobs:
             asterisk/rootfs/opt/asterisk-ha/backend.py \
             asterisk/rootfs/opt/asterisk-ha/ui.py \
             asterisk/rootfs/opt/asterisk-ha/ht503.py \
+            asterisk/rootfs/opt/asterisk-ha/dashboard_status.py \
             asterisk/rootfs/opt/asterisk-ha/sipcord.py \
             asterisk/rootfs/opt/asterisk-ha/ivr_audio.py \
             asterisk/rootfs/opt/asterisk-ha/ivr.py \
@@ -44,7 +45,7 @@ jobs:
           python -m json.tool custom_components/asterisk_pbx/translations/en.json >/dev/null
           python -m json.tool hacs.json >/dev/null
 
-      - name: Build final Ingress UI and FXS endpoint
+      - name: Build final Ingress UI, FXS endpoint and codec policy
         env:
           PYTHONPATH: asterisk/rootfs/opt/asterisk-ha
         run: |
@@ -56,10 +57,14 @@ jobs:
           import server_entry
 
           data = {
-              'extensions': [],
+              'extensions': [
+                  {'extension':'100','callerid':'PC','secret':'pc-secret','voicemail_pin':'1234','context':'from-internal'},
+                  {'extension':'101','callerid':'Remoto','secret':'remote-secret','voicemail_pin':'1234','context':'from-internal'},
+              ],
               'ht503': {
                   'enabled': True,
                   'fxo_user': '218277581',
+                  'fxo_secret': 'fxo-secret',
                   'fxs_enabled': True,
                   'fxs_extension': '200',
                   'fxs_callerid': 'Tel Interno',
@@ -67,9 +72,16 @@ jobs:
                   'fxs_voicemail_pin': '1234',
                   'fxs_context': 'from-internal',
               },
+              'sipcord': {
+                  'enabled': True,
+                  'server': 'bridge-eu1.sipcord.net',
+                  'port': 5060,
+                  'username': 'test-user',
+                  'password': 'test-pass',
+                  'dial_pattern': '_15XX',
+              },
           }
           data, changed, removed = server_entry.normalize_pbx(data)
-          assert changed
           assert removed == []
           assert data['ht503']['fxs_local_sip_port'] == 5062
           ext = next(e for e in data['extensions'] if e['extension'] == '200')
@@ -80,11 +92,12 @@ jobs:
               backend.CONF = Path(d)
               backend.render_managed(data)
               pjs = (Path(d) / 'pjsip_gui.conf').read_text()
-              assert '[200]' in pjs
-              assert 'type=endpoint' in pjs
+              assert '[100]' in pjs and '[101]' in pjs and '[200]' in pjs
               assert 'username=200' in pjs
               assert 'password=test-secret' in pjs
               assert 'identify_by=username,auth_username' in pjs
+              assert 'allow=ulaw,alaw' in pjs
+              assert 'opus' not in pjs.lower(), pjs
 
           html = server_entry.server.INDEX
           assert "'HT503 FXS / FXO'" in html
@@ -94,7 +107,11 @@ jobs:
           assert 'FXO — linha exterior / PSTN' in html
           assert 'Guardar FXS + FXO' in html
           assert 'Gravar pelo telefone' in html
-          assert 'garante automaticamente que a extensão PJSIP correspondente existe' in html
+          assert 'function dashboardStatusCard' in html
+          assert 'Extensões PJSIP' in html
+          assert 'Grandstream HT503' in html
+          assert 'SIPcord / Discord' in html
+          assert "api('api/ha-state')" in html
 
           match = re.search(r'<script>(.*)</script>', html, re.S)
           assert match, 'Final HTML has no script block'
@@ -194,4 +211,6 @@ jobs:
           grep -q '/share/asterisk-ivr' asterisk/rootfs/usr/local/bin/asterisk-ha-start
           grep -q 'fxs_secret' asterisk/rootfs/opt/asterisk-ha/ht503.py
           grep -q 'module reload res_pjsip.so' asterisk/rootfs/opt/asterisk-ha/server_entry.py
+          grep -q 'dashboard_status' asterisk/rootfs/opt/asterisk-ha/server_entry.py
+          grep -q "DEFAULT_AUDIO_CODECS='ulaw,alaw'" asterisk/rootfs/opt/asterisk-ha/backend.py
           grep -q 'asterisk_pbx' custom_components/asterisk_pbx/manifest.json
