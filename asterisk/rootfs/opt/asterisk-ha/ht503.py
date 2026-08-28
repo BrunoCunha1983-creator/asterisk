@@ -127,7 +127,14 @@ function loadHTFXS(num){
 
     pattern = r'async function ht503\(a\)\{.*?\}\nasync function saveHT\(\)'
     if re.search(pattern, index, flags=re.S):
-        index = re.sub(pattern, new_ht503 + '\nasync function saveHT()', index, count=1, flags=re.S)
+        # Use a replacement callable so re.sub does not reinterpret \n in the JS.
+        index = re.sub(
+            pattern,
+            lambda _m: new_ht503 + '\nasync function saveHT()',
+            index,
+            count=1,
+            flags=re.S,
+        )
 
     new_save = r'''async function saveHT(){
   let old=pbx.ht503||{};
@@ -152,5 +159,10 @@ function loadHTFXS(num){
     enabled:fxoEnabled,device_ip:E('#hip').value,fxo_user:fxoUser,fxo_secret:E('#hsec').value,callerid:E('#hcid').value,incoming_target:E('#htarget').value,outbound_prefix:E('#hpre').value,local_sip_port:+E('#hport').value};
   await savePbx();
 }'''
-    index = re.sub(r'async function saveHT\(\)\{[^\n]*\}', new_save, index, count=1)
+    index = re.sub(
+        r'async function saveHT\(\)\{[^\n]*\}',
+        lambda _m: new_save,
+        index,
+        count=1,
+    )
     return index
