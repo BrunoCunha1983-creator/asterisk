@@ -1,11 +1,10 @@
 name: Asterisk 22 PBX + GSM
-version: "0.1.0"
+version: "0.1.1"
 slug: asterisk22_pbx
 description: "Asterisk 22.11 PBX for Home Assistant with PJSIP, AMI, ARI, Ingress GUI and optional chan_dongle GSM"
 arch:
   - amd64
   - aarch64
-  - armv7
 startup: services
 boot: auto
 init: false
@@ -21,7 +20,7 @@ apparmor: false
 hassio_api: true
 homeassistant_api: true
 map:
-  - type: addon_config
+  - type: app_config
     read_only: false
   - type: share
     read_only: false
