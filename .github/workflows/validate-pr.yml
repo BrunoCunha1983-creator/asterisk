@@ -27,6 +27,7 @@ jobs:
             asterisk/rootfs/opt/asterisk-ha/backend.py \
             asterisk/rootfs/opt/asterisk-ha/ui.py \
             asterisk/rootfs/opt/asterisk-ha/sipcord.py \
+            asterisk/rootfs/opt/asterisk-ha/ivr_audio.py \
             asterisk/rootfs/opt/asterisk-ha/ivr.py \
             asterisk/rootfs/opt/asterisk-ha/ha_state.py \
             asterisk/rootfs/opt/asterisk-ha/server.py
@@ -79,12 +80,58 @@ jobs:
               entry = (conf / 'extensions_gui.conf').read_text()
               ivr = (conf / 'extensions_ivr_gui.conf').read_text()
               assert 'exten => 600,1,NoOp(IVR main)' in entry
+              assert 'exten => *77600,1,NoOp(Record IVR main prompt)' in entry
+              assert 'Record(/share/asterisk-ivr/ivr-main.wav,3,120,k)' in entry
               assert '[ivr-main]' in ivr
               assert 'Background(custom/ivr-main)' in ivr
               assert 'Dial(PJSIP/1515@sipcord,90)' in ivr
               assert 'Goto(from-internal,100,1)' in ivr
           html = "const tabs=['SIPcord / Discord','Trunks SIP']; if(current==='SIPcord / Discord') sipcord(a); if(current==='Trunks SIP') trunks(a); function trunks(a){}"
-          assert "'IVR'" in augment_index(html)
+          rendered = augment_index(html)
+          assert "'IVR'" in rendered
+          assert 'Gravar pelo telefone' in rendered
+          assert 'Upload WAV' in rendered
+          PY
+      - name: Test IVR WAV storage
+        env:
+          PYTHONPATH: asterisk/rootfs/opt/asterisk-ha
+        run: |
+          python - <<'PY'
+          import base64
+          import io
+          import math
+          import struct
+          import wave
+          from pathlib import Path
+          from tempfile import TemporaryDirectory
+          import ivr_audio
+
+          buf = io.BytesIO()
+          with wave.open(buf, 'wb') as w:
+              w.setnchannels(2)
+              w.setsampwidth(2)
+              w.setframerate(16000)
+              frames = bytearray()
+              for n in range(1600):
+                  sample = int(8000 * math.sin(2 * math.pi * 440 * n / 16000))
+                  frames += struct.pack('<hh', sample, sample)
+              w.writeframes(bytes(frames))
+
+          with TemporaryDirectory() as d:
+              ivr_audio.RECORDINGS = Path(d)
+              recording = ivr_audio.save_upload('IVR Main.wav', base64.b64encode(buf.getvalue()).decode())
+              assert recording['sound_id'] == 'custom/ivr-main'
+              path = Path(d) / 'ivr-main.wav'
+              assert path.exists()
+              with wave.open(str(path), 'rb') as w:
+                  assert w.getnchannels() == 1
+                  assert w.getsampwidth() == 2
+                  assert w.getframerate() == 8000
+              assert len(ivr_audio.list_recordings()) == 1
+              _, raw = ivr_audio.get_recording('ivr-main')
+              assert raw[:4] == b'RIFF' and raw[8:12] == b'WAVE'
+              assert ivr_audio.delete_recording('ivr-main') is True
+              assert not path.exists()
           PY
       - name: Check integration hooks
         run: |
@@ -93,5 +140,8 @@ jobs:
           grep -q 'extensions_ivr_gui.conf' asterisk/rootfs/etc/asterisk-template/extensions.conf
           grep -q 'auth_username' asterisk/rootfs/etc/asterisk-template/pjsip.conf
           grep -q '/api/ha-state' asterisk/rootfs/opt/asterisk-ha/server.py
+          grep -q '/api/ivr-upload' asterisk/rootfs/opt/asterisk-ha/server.py
+          grep -q 'ivr_record' asterisk/rootfs/opt/asterisk-ha/server.py
+          grep -q '/share/asterisk-ivr' asterisk/rootfs/usr/local/bin/asterisk-ha-start
           grep -q "'IVR'" asterisk/rootfs/opt/asterisk-ha/ivr.py
           grep -q 'asterisk_pbx' custom_components/asterisk_pbx/manifest.json
