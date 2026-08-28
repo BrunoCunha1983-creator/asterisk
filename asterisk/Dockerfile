@@ -71,8 +71,8 @@ FROM debian:bookworm-slim
 ENV DEBIAN_FRONTEND=noninteractive
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates python3 curl jq usbutils usb-modeswitch usb-modeswitch-data udev \
-    libedit2 libxml2 libxslt1.1 libsqlite3-0 libuuid1 libssl3 libncurses6 libcurl4 libsrtp2-1 \
-    libopus0 libspeex1 libspeexdsp1 libgsm1 libogg0 libvorbis0a libvorbisenc2 libnewt0.52 \
+    libedit2 libxml2 libxslt1.1 liburiparser1 libsqlite3-0 libuuid1 libssl3 libncurses6 libcurl4 libsrtp2-1 \
+    libopus0 libspeex1 libspeexdsp1 libgsm1 libogg0 libvorbis0a libvorbisenc2 libvorbisfile3 libnewt0.52 \
     && rm -rf /var/lib/apt/lists/*
 
 # Do not copy /stage wholesale. Asterisk's DESTDIR contains /var/run as a
