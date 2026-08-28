@@ -6,6 +6,52 @@ import json, re
 from backend import CONF, PBX, SEC, ast, load_json, save_json, token, apply_managed, render_managed, run, usb_ports
 from ui import INDEX
 
+
+def normalize_ht503_legacy_trunks(data):
+    """Remove an old provider-style HT503 trunk when dedicated FXO mode is enabled.
+
+    v0.1.4 represented a local HT503 as a provider trunk, which generated an
+    outbound REGISTER and caused SIP 405 responses.  Only remove a legacy
+    trunk when BOTH its server and username match the enabled HT503 settings.
+    This avoids touching unrelated provider trunks.
+    """
+    if not isinstance(data, dict):
+        return data, []
+
+    ht = data.get('ht503', {}) or {}
+    if not isinstance(ht, dict) or not ht.get('enabled', False):
+        return data, []
+
+    device_ip = str(ht.get('device_ip', '') or '').strip()
+    fxo_user = token(ht.get('fxo_user', ''))
+    if not device_ip or not fxo_user:
+        return data, []
+
+    trunks = data.get('sip_trunks', []) or []
+    if not isinstance(trunks, list):
+        return data, []
+
+    kept = []
+    removed = []
+    for trunk in trunks:
+        if not isinstance(trunk, dict):
+            kept.append(trunk)
+            continue
+        same_server = str(trunk.get('server', '') or '').strip() == device_ip
+        same_user = token(trunk.get('username', '')) == fxo_user
+        if same_server and same_user:
+            removed.append(str(trunk.get('name', '') or fxo_user))
+        else:
+            kept.append(trunk)
+
+    if not removed:
+        return data, []
+
+    cleaned = dict(data)
+    cleaned['sip_trunks'] = kept
+    return cleaned, removed
+
+
 class H(BaseHTTPRequestHandler):
     def log_message(self,*a): pass
     def sendj(self,obj,code=200):
@@ -41,7 +87,10 @@ class H(BaseHTTPRequestHandler):
             try:
                 if not isinstance(data,dict): raise ValueError('object required')
                 old=load_json(PBX,{})
-                save_json(PBX,data); out=apply_managed(old,data); self.sendj({'ok':True,'reload':out})
+                data, removed = normalize_ht503_legacy_trunks(data)
+                save_json(PBX,data)
+                out=apply_managed(old,data)
+                self.sendj({'ok':True,'reload':out,'removed_legacy_trunks':removed})
             except Exception as e: self.sendj({'ok':False,'error':str(e)},400)
             return
         if u.path.rstrip('/')=='/api/action':
@@ -77,6 +126,11 @@ class H(BaseHTTPRequestHandler):
             return
         self.sendj({'error':'not found'},404)
 
+
 if __name__=='__main__':
-    render_managed(load_json(PBX,{}))
+    startup=load_json(PBX,{})
+    startup, removed=normalize_ht503_legacy_trunks(startup)
+    if removed:
+        save_json(PBX,startup)
+    render_managed(startup)
     ThreadingHTTPServer(('0.0.0.0',8099),H).serve_forever()
