@@ -6,36 +6,27 @@ import json, re
 from backend import CONF, PBX, SEC, ast, load_json, save_json, token, render_managed, run, usb_ports
 from ui import INDEX
 from sipcord import ensure_sipcord_state, render_sipcord, augment_index as augment_sipcord_index
-from ivr import ensure_ivr_state, validate_ivrs, render_ivrs, augment_index as augment_ivr_index
+from ivr import ensure_ivr_state, validate_ivrs, render_ivrs, augment_index as augment_ivr_index, recording_code, recording_sound_id
+from ivr_audio import list_recordings, save_upload, get_recording, delete_recording, sound_to_stem
 from ha_state import build_snapshot
 
 INDEX = augment_ivr_index(augment_sipcord_index(INDEX))
 
 
 def normalize_ht503_legacy_trunks(data):
-    """Remove an old provider-style HT503 trunk when dedicated FXO mode is enabled.
-
-    v0.1.4 represented a local HT503 as a provider trunk, which generated an
-    outbound REGISTER and caused SIP 405 responses. Only remove a legacy
-    trunk when BOTH its server and username match the enabled HT503 settings.
-    This avoids touching unrelated provider trunks.
-    """
+    """Remove an old provider-style HT503 trunk when dedicated FXO mode is enabled."""
     if not isinstance(data, dict):
         return data, []
-
     ht = data.get('ht503', {}) or {}
     if not isinstance(ht, dict) or not ht.get('enabled', False):
         return data, []
-
     device_ip = str(ht.get('device_ip', '') or '').strip()
     fxo_user = token(ht.get('fxo_user', ''))
     if not device_ip or not fxo_user:
         return data, []
-
     trunks = data.get('sip_trunks', []) or []
     if not isinstance(trunks, list):
         return data, []
-
     kept = []
     removed = []
     for trunk in trunks:
@@ -48,10 +39,8 @@ def normalize_ht503_legacy_trunks(data):
             removed.append(str(trunk.get('name', '') or fxo_user))
         else:
             kept.append(trunk)
-
     if not removed:
         return data, []
-
     cleaned = dict(data)
     cleaned['sip_trunks'] = kept
     return cleaned, removed
@@ -88,13 +77,63 @@ def apply_pbx(old, new):
     return '\n'.join(results)
 
 
+def _clean_ivr_id(value):
+    return re.sub(r'[^0-9A-Za-z_-]', '', str(value or '')).lower()
+
+
+def _configured_extension(data, extension):
+    extension = token(extension)
+    return extension if any(token(e.get('extension', '')) == extension for e in (data.get('extensions') or [])) else ''
+
+
+def _find_ivr(data, ivr_id):
+    ivr_id = _clean_ivr_id(ivr_id)
+    for ivr in (data.get('ivrs') or []):
+        if _clean_ivr_id(ivr.get('id')) == ivr_id:
+            return ivr
+    return None
+
+
+def _asterisk_prompt(prompt, ivr):
+    prompt = re.sub(r'[^0-9A-Za-z_./-]', '', str(prompt or '').strip())
+    if prompt.startswith('custom/'):
+        return f'/share/asterisk-ivr/{sound_to_stem(prompt, "ivr-prompt")}'
+    if prompt:
+        return prompt
+    return f'/share/asterisk-ivr/{sound_to_stem(recording_sound_id(ivr), "ivr-prompt")}'
+
+
 class H(BaseHTTPRequestHandler):
     def log_message(self,*a): pass
+
     def sendj(self,obj,code=200):
-        b=json.dumps(obj,ensure_ascii=False).encode(); self.send_response(code); self.send_header('Content-Type','application/json; charset=utf-8'); self.send_header('Cache-Control','no-store'); self.send_header('Content-Length',len(b)); self.end_headers(); self.wfile.write(b)
+        b=json.dumps(obj,ensure_ascii=False).encode()
+        self.send_response(code)
+        self.send_header('Content-Type','application/json; charset=utf-8')
+        self.send_header('Cache-Control','no-store')
+        self.send_header('Content-Length',len(b))
+        self.end_headers()
+        self.wfile.write(b)
+
+    def send_bytes(self, data, content_type='application/octet-stream', code=200, filename=None):
+        self.send_response(code)
+        self.send_header('Content-Type', content_type)
+        self.send_header('Cache-Control', 'no-store')
+        self.send_header('Content-Length', len(data))
+        if filename:
+            self.send_header('Content-Disposition', f'inline; filename="{filename}"')
+        self.end_headers()
+        self.wfile.write(data)
+
     def body(self):
-        try: return json.loads(self.rfile.read(int(self.headers.get('Content-Length','0') or 0)) or b'{}')
-        except Exception: return {}
+        try:
+            length=int(self.headers.get('Content-Length','0') or 0)
+            if length > 24 * 1024 * 1024:
+                return {'_error':'request too large'}
+            return json.loads(self.rfile.read(length) or b'{}')
+        except Exception:
+            return {}
+
     def do_GET(self):
         u=urlparse(self.path); path=u.path.rstrip('/') or '/'; q=parse_qs(u.query)
         if path=='/':
@@ -110,6 +149,20 @@ class H(BaseHTTPRequestHandler):
             return
         if path=='/api/pbx': self.sendj(load_pbx_state()); return
         if path=='/api/usb': self.sendj(usb_ports()); return
+        if path=='/api/ivr-recordings':
+            try: self.sendj({'recordings':list_recordings()})
+            except Exception as e: self.sendj({'recordings':[],'error':str(e)},500)
+            return
+        if path=='/api/ivr-audio':
+            try:
+                name=(q.get('name') or [''])[0]
+                file_path, raw=get_recording(name)
+                self.send_bytes(raw,'audio/wav',200,file_path.name)
+            except FileNotFoundError:
+                self.sendj({'error':'recording not found'},404)
+            except Exception as e:
+                self.sendj({'error':str(e)},400)
+            return
         if path=='/api/calls': self.sendj({'channels':ast('core show channels concise')['output'],'endpoints':ast('pjsip show endpoints')['output'],'queues':ast('queue show')['output'],'confbridge':ast('confbridge list')['output']}); return
         if path=='/api/ht503-status':
             h=load_pbx_state().get('ht503',{}) or {}; user=token(h.get('fxo_user','ht503fxo'),'ht503fxo')
@@ -128,9 +181,12 @@ class H(BaseHTTPRequestHandler):
         if path=='/api/diagnostics': self.sendj({'modules':ast('module show like res_ari')['output']+'\n'+ast('module show like chan_dongle')['output'],'pjsip':ast('pjsip show transports')['output']+'\n'+ast('pjsip show contacts')['output'],'dongle':ast('dongle show devices')['output'],'usb':run('lsusb; echo; ls -l /dev/ttyUSB* /dev/ttyACM* 2>/dev/null')['output']}); return
         if path=='/api/credentials': self.sendj(load_json(SEC,{})); return
         self.sendj({'error':'not found'},404)
+
     def do_POST(self):
-        u=urlparse(self.path); data=self.body()
-        if u.path.rstrip('/')=='/api/pbx':
+        u=urlparse(self.path); data=self.body(); path=u.path.rstrip('/')
+        if data.get('_error'):
+            self.sendj({'ok':False,'error':'request too large'},413); return
+        if path=='/api/pbx':
             try:
                 if not isinstance(data,dict): raise ValueError('object required')
                 old=load_json(PBX,{})
@@ -140,12 +196,45 @@ class H(BaseHTTPRequestHandler):
                 self.sendj({'ok':True,'reload':out,'removed_legacy_trunks':removed,'normalized':normalized})
             except Exception as e: self.sendj({'ok':False,'error':str(e)},400)
             return
-        if u.path.rstrip('/')=='/api/action':
+        if path=='/api/ivr-upload':
+            try:
+                recording=save_upload(data.get('name',''),data.get('data',''))
+                self.sendj({'ok':True,'recording':recording})
+            except Exception as e:
+                self.sendj({'ok':False,'error':str(e)},400)
+            return
+        if path=='/api/ivr-delete':
+            try:
+                deleted=delete_recording(data.get('name',''))
+                self.sendj({'ok':True,'deleted':deleted})
+            except Exception as e:
+                self.sendj({'ok':False,'error':str(e)},400)
+            return
+        if path=='/api/action':
             action=data.get('action','')
             if action=='cli':
                 c=str(data.get('command','')); allowed=('core reload','pjsip reload','module reload chan_dongle.so','dialplan reload','voicemail reload','queue reload all')
                 if c not in allowed: self.sendj({'ok':False,'output':'Command not allowed'},403); return
                 self.sendj(ast(c)); return
+            if action in ('ivr_record','ivr_test'):
+                pbx=load_pbx_state()
+                ivr=_find_ivr(pbx,data.get('ivr_id',''))
+                source=_configured_extension(pbx,data.get('source_extension',''))
+                if not ivr or not ivr.get('enabled',True):
+                    self.sendj({'ok':False,'output':'IVR não encontrado ou desativado'},404); return
+                if not source:
+                    self.sendj({'ok':False,'output':'Extensão PJSIP de origem inválida'},400); return
+                if action=='ivr_record':
+                    code=recording_code(ivr)
+                    if not code:
+                        self.sendj({'ok':False,'output':'IVR sem extensão de gravação'},400); return
+                    result=ast(f'channel originate PJSIP/{source} extension {code}@from-internal')
+                    self.sendj({'ok':result['ok'],'output':result['output'],'record_code':code,'sound_id':recording_sound_id(ivr)}); return
+                prompt=_asterisk_prompt(ivr.get('prompt'),ivr)
+                if not prompt:
+                    self.sendj({'ok':False,'output':'IVR sem prompt'},400); return
+                result=ast(f'channel originate PJSIP/{source} application Playback {prompt}')
+                self.sendj({'ok':result['ok'],'output':result['output'],'prompt':prompt}); return
             if action=='dongle_show': self.sendj(ast('dongle show devices')); return
             if action in ('sms','ussd'):
                 dev=token(data.get('device',''))
@@ -155,6 +244,7 @@ class H(BaseHTTPRequestHandler):
                 code=re.sub(r'[^0-9*#+]','',str(data.get('code',''))); self.sendj(ast(f'dongle ussd {dev} {code}')); return
             self.sendj({'ok':False,'output':'Unknown action'},400); return
         self.sendj({'error':'not found'},404)
+
     def do_PUT(self):
         u=urlparse(self.path); q=parse_qs(u.query); data=self.body()
         if u.path.rstrip('/')=='/api/file':
