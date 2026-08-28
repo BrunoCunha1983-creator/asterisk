@@ -71,7 +71,7 @@ FROM debian:bookworm-slim
 ENV DEBIAN_FRONTEND=noninteractive
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates python3 curl jq usbutils usb-modeswitch usb-modeswitch-data udev \
-    libedit2 libxml2 libsqlite3-0 libuuid1 libssl3 libncurses6 libcurl4 libsrtp2-1 \
+    libedit2 libxml2 libxslt1.1 libsqlite3-0 libuuid1 libssl3 libncurses6 libcurl4 libsrtp2-1 \
     libopus0 libspeex1 libspeexdsp1 libgsm1 libogg0 libvorbis0a libvorbisenc2 libnewt0.52 \
     && rm -rf /var/lib/apt/lists/*
 
@@ -81,7 +81,16 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 COPY --from=builder /stage/usr/ /usr/
 COPY --from=builder /stage/var/lib/asterisk/ /var/lib/asterisk/
 COPY rootfs/ /
-RUN chmod +x /usr/local/bin/asterisk-ha-start \
-    && mkdir -p /config /share/asterisk-recordings /var/log/asterisk /var/spool/asterisk /run/asterisk
+
+# Fail the image build immediately if Asterisk or any module has an unresolved
+# shared-library dependency. This prevents a successful Docker build followed
+# by an app that crashes on first start.
+RUN set -eu; \
+    chmod +x /usr/local/bin/asterisk-ha-start; \
+    mkdir -p /config /share/asterisk-recordings /var/log/asterisk /var/spool/asterisk /run/asterisk; \
+    missing="$( { ldd /usr/sbin/asterisk; find /usr/lib/asterisk/modules -type f -name '*.so' -exec ldd {} \; ; } 2>/dev/null | grep 'not found' || true )"; \
+    if [ -n "$missing" ]; then echo "Unresolved runtime libraries:"; echo "$missing"; exit 1; fi; \
+    /usr/sbin/asterisk -V
+
 EXPOSE 8099/tcp 5038/tcp 8088/tcp 5060/udp 5061/tcp 4569/udp
 ENTRYPOINT ["/usr/local/bin/asterisk-ha-start"]
