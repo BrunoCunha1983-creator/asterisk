@@ -8,6 +8,8 @@ A pasta [`asterisk/`](asterisk/) contém o Add-on com:
 
 - Asterisk 22.11.0
 - PJSIP
+- HT503 FXS/FXO
+- SIPcord / Discord
 - AMI
 - ARI + WebSocket
 - Ingress GUI
@@ -18,12 +20,53 @@ A pasta [`asterisk/`](asterisk/) contém o Add-on com:
 - chamadas GSM, SMS e USSD
 - acesso USB/UART/udev
 - configuração persistente em `addon_config`
+- API estruturado para Home Assistant em `/api/ha-state`
 
 O build descarrega exatamente Asterisk 22.11.0 e valida o SHA-256 antes de compilar.
 
 Para instalar como repositório de Add-ons no Home Assistant, use este repositório GitHub e instale **Asterisk 22 PBX + GSM**.
 
-## 2. Asterisk 22.11.0 + chan_dongle standalone
+## 2. Integração Home Assistant / HACS
+
+A pasta [`custom_components/asterisk_pbx/`](custom_components/asterisk_pbx/) contém uma integração própria para apresentar o Asterisk como dispositivo e entidades reais no Home Assistant.
+
+### Instalação pelo HACS
+
+1. Instale/abra o HACS.
+2. Adicione este repositório como **Custom repository** do tipo **Integration**.
+3. Instale **Asterisk PBX**.
+4. Reinicie o Home Assistant.
+5. Vá a **Definições → Dispositivos e Serviços → Adicionar integração → Asterisk PBX**.
+6. Introduza o IP/hostname do Home Assistant onde o add-on corre e a porta `8099`.
+
+Exemplo:
+
+```text
+Host: 192.168.1.139
+Porta: 8099
+Intervalo: 15
+```
+
+### Entidades criadas
+
+O dispositivo **Asterisk PBX** inclui, entre outras:
+
+- PBX online/offline
+- versão do Asterisk
+- chamadas ativas
+- canais ativos
+- chamadas processadas
+- total de extensões
+- extensões registadas/offline
+- uma entidade de conectividade por extensão
+- estado e RTT do HT503 FXO
+- estado e RTT do SIPcord
+- trunks SIP
+- dongles GSM totais/ligados
+
+A integração usa polling local ao endpoint `/api/ha-state`; não envia credenciais SIP para o Home Assistant.
+
+## 3. Asterisk 22.11.0 + chan_dongle standalone
 
 A pasta [`standalone/`](standalone/) contém o instalador do `chan_dongle` e um gerador do pacote standalone:
 
@@ -41,4 +84,4 @@ Isto gera `dist/asterisk-22.11.0-with-chan_dongle.tar.gz`.
 
 ## Estado
 
-Versão inicial `0.1.0`. A GUI e geração dos ficheiros de configuração foram validadas localmente. O próximo teste é o build/arranque no Home Assistant OS com modem GSM real.
+O add-on e a integração Home Assistant são validados por GitHub Actions antes de merge para `main`.
