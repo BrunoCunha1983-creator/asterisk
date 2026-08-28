@@ -76,13 +76,23 @@ def ast_compat(command):
 
 
 def endpoint_lines_compat(*args, **kwargs):
-    """Add NAT-safe RTP liveness/session settings to managed PJSIP endpoints."""
+    """Apply the GUI-configurable RTP liveness/session policy exactly once."""
     lines = list(_base_endpoint_lines(*args, **kwargs))
     num = str(args[0] if args else kwargs.get('num', '') or '')
     media = _current_network or DEFAULT_NETWORK
-    keepalive = int(media.get('rtp_keepalive', 10) or 0)
+
+    managed_prefixes = (
+        'rtp_keepalive=', 'rtp_timeout=', 'rtp_timeout_hold=',
+        'timers=', 'timers_min_se=', 'timers_sess_expires='
+    )
+    lines = [
+        line for line in lines
+        if not any(str(line).strip().lower().startswith(prefix) for prefix in managed_prefixes)
+    ]
+
+    keepalive = int(media.get('rtp_keepalive', 15) or 0)
     timeout = int(media.get('rtp_timeout', 30) or 0)
-    timeout_hold = int(media.get('rtp_timeout_hold', 120) or 0)
+    timeout_hold = int(media.get('rtp_timeout_hold', 300) or 0)
     timers = bool(media.get('session_timers', True))
     additions = [
         f'rtp_keepalive={keepalive}',
@@ -93,7 +103,6 @@ def endpoint_lines_compat(*args, **kwargs):
     if timers:
         additions += ['timers_min_se=90', 'timers_sess_expires=180']
 
-    # Insert before the auth object (the second [endpoint] category).
     marker = f'\n[{num}]'
     insert_at = None
     for idx, line in enumerate(lines[1:], start=1):
