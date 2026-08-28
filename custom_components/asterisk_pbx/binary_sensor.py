@@ -41,6 +41,12 @@ DESCRIPTIONS = (
         device_class=BinarySensorDeviceClass.CONNECTIVITY,
         value_fn=lambda d: bool((d.get("sipcord") or {}).get("reachable")),
     ),
+    AsteriskBinaryDescription(
+        key="ivr_in_use",
+        name="IVR em utilização",
+        icon="mdi:account-voice",
+        value_fn=lambda d: bool(d.get("ivr_in_use")),
+    ),
 )
 
 
@@ -52,21 +58,27 @@ async def async_setup_entry(
     coordinator: AsteriskCoordinator = hass.data[DOMAIN][entry.entry_id]
     async_add_entities(AsteriskStatusBinarySensor(coordinator, entry.entry_id, d) for d in DESCRIPTIONS)
 
-    known: set[str] = set()
+    known_extensions: set[str] = set()
+    known_ivrs: set[str] = set()
 
     @callback
-    def add_new_extensions() -> None:
+    def add_dynamic_entities() -> None:
         new_entities = []
         for ext in (coordinator.data or {}).get("extensions", []):
             number = str(ext.get("extension") or "").strip()
-            if number and number not in known:
-                known.add(number)
+            if number and number not in known_extensions:
+                known_extensions.add(number)
                 new_entities.append(AsteriskExtensionBinarySensor(coordinator, entry.entry_id, number))
+        for ivr in (coordinator.data or {}).get("ivrs", []):
+            ivr_id = str(ivr.get("id") or "").strip()
+            if ivr_id and ivr_id not in known_ivrs:
+                known_ivrs.add(ivr_id)
+                new_entities.append(AsteriskIVRBinarySensor(coordinator, entry.entry_id, ivr_id))
         if new_entities:
             async_add_entities(new_entities)
 
-    add_new_extensions()
-    entry.async_on_unload(coordinator.async_add_listener(add_new_extensions))
+    add_dynamic_entities()
+    entry.async_on_unload(coordinator.async_add_listener(add_dynamic_entities))
 
 
 class AsteriskStatusBinarySensor(AsteriskEntity, BinarySensorEntity):
@@ -98,6 +110,8 @@ class AsteriskStatusBinarySensor(AsteriskEntity, BinarySensorEntity):
             info = dict(data.get("sipcord") or {})
             info.pop("password", None)
             return info
+        if self.entity_description.key == "ivr_in_use":
+            return {"ivrs": data.get("ivrs", [])}
         return None
 
 
@@ -125,4 +139,34 @@ class AsteriskExtensionBinarySensor(AsteriskEntity, BinarySensorEntity):
     def extra_state_attributes(self):
         item = dict(self._data())
         item.pop("registered", None)
+        return item
+
+
+class AsteriskIVRBinarySensor(AsteriskEntity, BinarySensorEntity):
+    _attr_icon = "mdi:menu-open"
+
+    def __init__(self, coordinator: AsteriskCoordinator, entry_id: str, ivr_id: str) -> None:
+        super().__init__(coordinator, entry_id)
+        self.ivr_id = ivr_id
+        self._attr_unique_id = f"{entry_id}_ivr_{ivr_id}"
+
+    def _data(self) -> dict[str, Any]:
+        for item in (self.coordinator.data or {}).get("ivrs", []):
+            if str(item.get("id")) == self.ivr_id:
+                return item
+        return {}
+
+    @property
+    def name(self) -> str:
+        item = self._data()
+        return f"IVR {item.get('name') or self.ivr_id}"
+
+    @property
+    def is_on(self) -> bool:
+        return bool(self._data().get("active"))
+
+    @property
+    def extra_state_attributes(self):
+        item = dict(self._data())
+        item.pop("active", None)
         return item

@@ -5,10 +5,11 @@ import json, re
 
 from backend import CONF, PBX, SEC, ast, load_json, save_json, token, render_managed, run, usb_ports
 from ui import INDEX
-from sipcord import ensure_sipcord_state, render_sipcord, augment_index
+from sipcord import ensure_sipcord_state, render_sipcord, augment_index as augment_sipcord_index
+from ivr import ensure_ivr_state, validate_ivrs, render_ivrs, augment_index as augment_ivr_index
 from ha_state import build_snapshot
 
-INDEX = augment_index(INDEX)
+INDEX = augment_ivr_index(augment_sipcord_index(INDEX))
 
 
 def normalize_ht503_legacy_trunks(data):
@@ -58,8 +59,10 @@ def normalize_ht503_legacy_trunks(data):
 
 def normalize_pbx(data):
     data, sipcord_changed = ensure_sipcord_state(data)
+    data, ivr_changed = ensure_ivr_state(data)
     data, removed_ht503 = normalize_ht503_legacy_trunks(data)
-    return data, sipcord_changed, removed_ht503
+    validate_ivrs(data)
+    return data, bool(sipcord_changed or ivr_changed), removed_ht503
 
 
 def load_pbx_state():
@@ -74,6 +77,7 @@ def apply_pbx(old, new):
     """Render all managed config before doing targeted reloads."""
     render_managed(new)
     render_sipcord(CONF, new)
+    render_ivrs(CONF, new)
     results = []
     for command in ('pjsip reload', 'dialplan reload', 'voicemail reload'):
         result = ast(command)
@@ -130,10 +134,10 @@ class H(BaseHTTPRequestHandler):
             try:
                 if not isinstance(data,dict): raise ValueError('object required')
                 old=load_json(PBX,{})
-                data, sipcord_changed, removed = normalize_pbx(data)
+                data, normalized, removed = normalize_pbx(data)
                 save_json(PBX,data)
                 out=apply_pbx(old,data)
-                self.sendj({'ok':True,'reload':out,'removed_legacy_trunks':removed,'sipcord_migrated':sipcord_changed})
+                self.sendj({'ok':True,'reload':out,'removed_legacy_trunks':removed,'normalized':normalized})
             except Exception as e: self.sendj({'ok':False,'error':str(e)},400)
             return
         if u.path.rstrip('/')=='/api/action':
@@ -174,4 +178,5 @@ if __name__=='__main__':
     startup=load_pbx_state()
     render_managed(startup)
     render_sipcord(CONF,startup)
+    render_ivrs(CONF,startup)
     ThreadingHTTPServer(('0.0.0.0',8099),H).serve_forever()

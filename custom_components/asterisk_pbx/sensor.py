@@ -28,6 +28,9 @@ DESCRIPTIONS = (
     AsteriskSensorDescription(key="extensions_total", name="Extensões", icon="mdi:phone-classic", value_fn=lambda d: d.get("extensions_total", 0)),
     AsteriskSensorDescription(key="extensions_registered", name="Extensões registadas", icon="mdi:phone-check", value_fn=lambda d: d.get("extensions_registered", 0)),
     AsteriskSensorDescription(key="extensions_unregistered", name="Extensões offline", icon="mdi:phone-off", value_fn=lambda d: d.get("extensions_unregistered", 0)),
+    AsteriskSensorDescription(key="ivrs_total", name="IVRs", icon="mdi:menu", value_fn=lambda d: d.get("ivrs_total", 0)),
+    AsteriskSensorDescription(key="ivrs_enabled", name="IVRs ativos", icon="mdi:menu-open", value_fn=lambda d: d.get("ivrs_enabled", 0)),
+    AsteriskSensorDescription(key="ivr_active_channels", name="Canais em IVR", icon="mdi:account-voice", value_fn=lambda d: d.get("ivr_active_channels", 0)),
     AsteriskSensorDescription(key="sip_trunks_total", name="Trunks SIP", icon="mdi:transit-connection-variant", value_fn=lambda d: d.get("sip_trunks_total", 0)),
     AsteriskSensorDescription(key="gsm_dongles_total", name="Dongles GSM", icon="mdi:sim", value_fn=lambda d: d.get("gsm_dongles_total", 0)),
     AsteriskSensorDescription(key="gsm_dongles_connected", name="Dongles GSM ligados", icon="mdi:signal", value_fn=lambda d: d.get("gsm_dongles_connected", 0)),
@@ -64,4 +67,6 @@ class AsteriskSensor(AsteriskEntity, SensorEntity):
             return {"devices": data.get("gsm_dongles", [])}
         if self.entity_description.key == "extensions_total":
             return {"extensions": data.get("extensions", [])}
+        if self.entity_description.key == "ivrs_total":
+            return {"ivrs": data.get("ivrs", [])}
         return None
