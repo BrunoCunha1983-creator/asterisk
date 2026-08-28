@@ -68,7 +68,8 @@ def resolve_nat(options):
     options = options or {}
     local_ip = detect_local_ip()
     local_net = _valid_network(options.get('local_net')) or auto_local_net(local_ip)
-    manual = _valid_ip(options.get('external_address', ''))
+    raw_external = str(options.get('external_address', '') or '').strip()
+    manual = '' if raw_external.lower() == 'auto' else _valid_ip(raw_external)
     external = manual
     source = 'manual' if manual else ''
     detect_url = ''
@@ -124,6 +125,16 @@ def patch_transport(path, nat):
             in_transport = stripped.lower() == '[transport-udp]'
             out.append(line)
             continue
+
+        # #include pjsip_gui.conf follows the transport in our template. Insert
+        # transport options before it so they cannot attach to an included
+        # endpoint/AOR category.
+        if in_transport and stripped.lower().startswith('#include'):
+            add_nat_lines()
+            in_transport = False
+            out.append(line)
+            continue
+
         if in_transport and '=' in stripped:
             key = stripped.split('=', 1)[0].strip().lower()
             if key in managed:
