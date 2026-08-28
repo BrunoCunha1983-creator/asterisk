@@ -3,10 +3,12 @@ from http.server import ThreadingHTTPServer
 
 import server
 from ht503 import augment_index as augment_ht503_index, ensure_ht503_state, validate_ht503_state
+from dashboard_status import augment_index as augment_dashboard_index
 
 
-# Apply the HT503 UI after the base server has already applied SIPcord + IVR.
-server.INDEX = augment_ht503_index(server.INDEX)
+# Apply the HT503 UI after the base server has already applied SIPcord + IVR,
+# then add the live Dashboard status panels on top of the final UI.
+server.INDEX = augment_dashboard_index(augment_ht503_index(server.INDEX))
 
 _base_normalize_pbx = server.normalize_pbx
 _base_ast = server.ast
@@ -35,12 +37,7 @@ def _reload_failed(result):
 
 
 def ast_compat(command):
-    """Translate the legacy GUI PJSIP reload action to Asterisk 22 syntax.
-
-    This Asterisk 22 image does not expose the old `pjsip reload` CLI command.
-    Reload res_pjsip directly and use a core reload only as a safety fallback.
-    All existing callers can keep using the logical `pjsip reload` action.
-    """
+    """Translate the legacy GUI PJSIP reload action to Asterisk 22 syntax."""
     if str(command).strip() != 'pjsip reload':
         return _base_ast(command)
 
@@ -65,9 +62,6 @@ def ast_compat(command):
     }
 
 
-# Functions in server.py resolve globals dynamically, so replacing these module
-# attributes also updates requests handled by server.H, including Dashboard,
-# managed saves and config-file editor reloads.
 server.normalize_pbx = normalize_pbx
 server.ast = ast_compat
 
