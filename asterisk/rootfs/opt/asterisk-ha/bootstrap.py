@@ -22,13 +22,10 @@ repls={
 '__AMI_USER__':sec['ami_user'],'__AMI_PASSWORD__':sec['ami_password'],
 '__ARI_USER__':sec['ari_user'],'__ARI_PASSWORD__':sec['ari_password']}
 for p in CONF.glob('*.conf'):
-    text=p.read_text(errors='ignore')
-    old=text
+    text=p.read_text(errors='ignore'); old=text
     for k,v in repls.items(): text=text.replace(k,v)
     if text!=old: p.write_text(text)
 
-# Keep the chan_dongle app option authoritative even on upgrades where the
-# persistent modules.conf was created by an older version of the app.
 modules=CONF/'modules.conf'
 if modules.exists():
     lines=modules.read_text(errors='ignore').splitlines()
@@ -38,8 +35,6 @@ if modules.exists():
     lines.append(('load' if options.get('chan_dongle', True) else 'noload') + ' => chan_dongle.so')
     modules.write_text('\n'.join(lines).rstrip()+'\n')
 
-# v0.1.4 migration: cdr_csv needs a [csv] section. Preserve any existing CDR
-# settings and only append the missing backend configuration.
 cdr=CONF/'cdr.conf'
 if cdr.exists():
     text=cdr.read_text(errors='ignore')
@@ -49,10 +44,36 @@ if cdr.exists():
             f.write('\n[csv]\nusegmtime=no\nloguniqueid=yes\nloguserfield=yes\naccountlogs=yes\nnewcdrcolumns=yes\n')
 
 pbx=STATE/'pbx.json'
+def default_ht503():
+    return {
+      'enabled':False,
+      'device_ip':'',
+      'fxo_user':'ht503fxo',
+      'fxo_secret':secrets.token_urlsafe(12),
+      'callerid':'Exterior',
+      'incoming_target':'100',
+      'outbound_prefix':'8',
+      'local_sip_port':5064
+    }
+
 if not pbx.exists():
-    pbx.write_text(json.dumps({
+    data={
       'extensions':[{'extension':'100','callerid':'Home Assistant 100','secret':secrets.token_urlsafe(12),'voicemail_pin':'1234','context':'from-internal'}],
+      'ht503':default_ht503(),
       'sip_trunks':[],
       'gsm_dongles':[],
       'routes':{'gsm_prefix':'9','incoming_target':'100'}
-    },indent=2))
+    }
+    pbx.write_text(json.dumps(data,indent=2))
+else:
+    # v0.1.5 migration: add the dedicated HT503 section without touching
+    # existing extensions/trunks. Old local-ATA trunks remain visible so the
+    # user can deliberately remove/migrate them in the GUI.
+    try:
+        data=json.loads(pbx.read_text())
+        changed=False
+        if 'ht503' not in data:
+            data['ht503']=default_ht503(); changed=True
+        if changed: pbx.write_text(json.dumps(data,indent=2,ensure_ascii=False))
+    except Exception:
+        pass
