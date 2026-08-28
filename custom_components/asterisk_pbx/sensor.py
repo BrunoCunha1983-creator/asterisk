@@ -34,7 +34,8 @@ DESCRIPTIONS = (
     AsteriskSensorDescription(key="sip_trunks_total", name="Trunks SIP", icon="mdi:transit-connection-variant", value_fn=lambda d: d.get("sip_trunks_total", 0)),
     AsteriskSensorDescription(key="gsm_dongles_total", name="Dongles GSM", icon="mdi:sim", value_fn=lambda d: d.get("gsm_dongles_total", 0)),
     AsteriskSensorDescription(key="gsm_dongles_connected", name="Dongles GSM ligados", icon="mdi:signal", value_fn=lambda d: d.get("gsm_dongles_connected", 0)),
-    AsteriskSensorDescription(key="ht503_rtt", name="HT503 RTT", icon="mdi:timer-outline", native_unit_of_measurement=UnitOfTime.MILLISECONDS, value_fn=lambda d: (d.get("ht503") or {}).get("rtt_ms")),
+    AsteriskSensorDescription(key="ht503_rtt", name="HT503 FXO RTT", icon="mdi:timer-outline", native_unit_of_measurement=UnitOfTime.MILLISECONDS, value_fn=lambda d: (d.get("ht503") or {}).get("rtt_ms")),
+    AsteriskSensorDescription(key="ht503_fxs_rtt", name="HT503 FXS RTT", icon="mdi:timer-outline", native_unit_of_measurement=UnitOfTime.MILLISECONDS, value_fn=lambda d: (((d.get("ht503") or {}).get("fxs") or {}).get("rtt_ms"))),
     AsteriskSensorDescription(key="sipcord_rtt", name="SIPcord RTT", icon="mdi:timer-outline", native_unit_of_measurement=UnitOfTime.MILLISECONDS, value_fn=lambda d: (d.get("sipcord") or {}).get("rtt_ms")),
 )
 
