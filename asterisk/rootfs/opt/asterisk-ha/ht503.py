@@ -63,11 +63,20 @@ def augment_index(index):
     """Replace the old FXO-only HT503 page with one unified FXS/FXO page."""
     index = index.replace('HT503 / FXO', 'HT503 FXS / FXO')
 
-    new_ht503 = r'''async function ht503(a){
+    new_ht503 = r'''function htLines(text,key){
+  if(!key)return '';
+  return String(text||'').split('\n').filter(l=>l.includes(key)).join('\n');
+}
+async function ht503(a){
   let h=pbx.ht503||{};
   let fnum=String(h.fxs_extension||'');
   let fe=(pbx.extensions||[]).find(e=>String(e.extension||'')===fnum)||{};
   let st=(h.enabled||h.fxs_enabled)?await api('api/ht503-status'):{};
+  let all=h.fxs_enabled?await api('api/calls'):{};
+  let fxsStatus=htLines(all.endpoints||'',fnum);
+  let fxsContact=htLines(st.contacts||'',fnum+'/')||htLines(st.contacts||'','sip:'+fnum+'@');
+  let fxoStatus=st.endpoint||'';
+  let fxoContact=htLines(st.contacts||'',String(h.fxo_user||'')+'/')||htLines(st.contacts||'','sip:'+String(h.fxo_user||'')+'@');
   let extopts=['<option value="">— escolher/criar —</option>'].concat((pbx.extensions||[]).map(e=>`<option value="${esc(e.extension)}" ${String(e.extension)===fnum?'selected':''}>${esc(e.extension)} — ${esc(e.callerid||'')}</option>`)).join('');
   a.innerHTML=`<div class=card><h2>Grandstream HT503 — FXS + FXO</h2>
   <div class=note>O HT503 tem duas portas independentes. <b>FXS</b> liga o telefone analógico e funciona como uma extensão PJSIP normal. <b>FXO</b> liga a linha telefónica exterior e também se regista no Asterisk. Nenhuma das duas necessita de <code>type=registration</code> outbound no Asterisk.</div>
@@ -84,7 +93,7 @@ def augment_index(index):
     <div><label>Contexto</label><input id=hfxsctx value="${esc(fe.context||'from-internal')}"></div>
     <div><label>Porta SIP local FXS (informativo)</label><input id=hfxsport value="${esc(h.fxs_local_sip_port||5062)}"></div>
   </div>
-  ${h.fxs_enabled?`<h4>Estado FXS</h4><pre>${esc(st.fxs_endpoint||'')}\n${esc(st.fxs_contact||'')}</pre>`:''}
+  ${h.fxs_enabled?`<h4>Estado FXS</h4><pre>${esc(fxsStatus||'Sem endpoint/contacto FXS visível neste momento')}\n${esc(fxsContact||'')}</pre>`:''}
   </div>
 
   <div class=item><h3>☎ FXO — linha exterior / PSTN</h3>
@@ -99,7 +108,7 @@ def augment_index(index):
     <div><label>Prefixo para chamadas PSTN</label><input id=hpre value="${esc(h.outbound_prefix||'8')}"></div>
     <div><label>Porta SIP local FXO (informativo)</label><input id=hport value="${esc(h.local_sip_port||5064)}"></div>
   </div>
-  ${h.enabled?`<h4>Estado FXO</h4><pre>${esc(st.fxo_endpoint||st.endpoint||'')}\n${esc(st.fxo_contact||'')}</pre>`:''}
+  ${h.enabled?`<h4>Estado FXO</h4><pre>${esc(fxoStatus||'Sem endpoint FXO visível neste momento')}\n${esc(fxoContact||'')}</pre>`:''}
   </div>
 
   <div class=actions><button class="btn primary" onclick=saveHT()>Guardar FXS + FXO</button><button class=btn onclick=ht503(E('#app'))>Atualizar estado</button></div>
@@ -124,7 +133,10 @@ function loadHTFXS(num){
   let old=pbx.ht503||{};
   let fxsEnabled=E('#hfxsen').value==='1';
   let fxsNum=E('#hfxsnum').value.trim();
+  let fxoEnabled=E('#hen').value==='1';
+  let fxoUser=E('#huser').value.trim();
   if(fxsEnabled&&!fxsNum){alert('Escolhe ou cria a extensão FXS.');return}
+  if(fxsEnabled&&fxoEnabled&&fxsNum===fxoUser){alert('FXS e FXO têm de usar utilizadores SIP diferentes.');return}
   if(fxsNum){
     pbx.extensions=pbx.extensions||[];
     let oldNum=String(old.fxs_extension||'');
@@ -137,7 +149,7 @@ function loadHTFXS(num){
   }
   pbx.ht503={...old,
     fxs_enabled:fxsEnabled,fxs_extension:fxsNum,fxs_local_sip_port:+E('#hfxsport').value,
-    enabled:E('#hen').value==='1',device_ip:E('#hip').value,fxo_user:E('#huser').value,fxo_secret:E('#hsec').value,callerid:E('#hcid').value,incoming_target:E('#htarget').value,outbound_prefix:E('#hpre').value,local_sip_port:+E('#hport').value};
+    enabled:fxoEnabled,device_ip:E('#hip').value,fxo_user:fxoUser,fxo_secret:E('#hsec').value,callerid:E('#hcid').value,incoming_target:E('#htarget').value,outbound_prefix:E('#hpre').value,local_sip_port:+E('#hport').value};
   await savePbx();
 }'''
     index = re.sub(r'async function saveHT\(\)\{[^\n]*\}', new_save, index, count=1)
