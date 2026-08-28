@@ -10,6 +10,7 @@ A pasta [`asterisk/`](asterisk/) contém o Add-on com:
 - PJSIP
 - HT503 FXS/FXO
 - SIPcord / Discord
+- IVR gerido pela GUI
 - AMI
 - ARI + WebSocket
 - Ingress GUI
@@ -20,11 +21,28 @@ A pasta [`asterisk/`](asterisk/) contém o Add-on com:
 - chamadas GSM, SMS e USSD
 - acesso USB/UART/udev
 - configuração persistente em `addon_config`
-- API estruturado para Home Assistant em `/api/ha-state`
+- API estruturada para Home Assistant em `/api/ha-state`
 
 O build descarrega exatamente Asterisk 22.11.0 e valida o SHA-256 antes de compilar.
 
 Para instalar como repositório de Add-ons no Home Assistant, use este repositório GitHub e instale **Asterisk 22 PBX + GSM**.
+
+### IVR
+
+No separador **IVR** da interface Web pode criar vários menus de voz. Cada IVR tem:
+
+- ID e nome
+- extensão interna de entrada, por exemplo `600`
+- prompt/gravação Asterisk, por exemplo `custom/ivr-main`
+- timeout e número de tentativas
+- som de tecla inválida e timeout
+- destino de fallback
+- teclas `0-9`, `*` e `#`
+- destinos para extensão, outro IVR, voicemail, SIPcord, GSM, HT503/PSTN ou desligar
+
+A extensão de entrada permite reutilizar o IVR em qualquer rota. Exemplo: se o IVR Principal usa a extensão `600`, configure `600` como destino de chamadas recebidas do HT503 ou GSM.
+
+Os prompts são identificadores de som Asterisk sem extensão. Exemplo: um ficheiro instalado como `custom/ivr-main.wav` é configurado na GUI como `custom/ivr-main`.
 
 ## 2. Integração Home Assistant / HACS
 
@@ -61,6 +79,10 @@ O dispositivo **Asterisk PBX** inclui, entre outras:
 - uma entidade de conectividade por extensão
 - estado e RTT do HT503 FXO
 - estado e RTT do SIPcord
+- total de IVRs e IVRs ativos
+- canais atualmente dentro de IVR
+- sensor binário global `IVR em utilização`
+- uma entidade de atividade por IVR
 - trunks SIP
 - dongles GSM totais/ligados
 
