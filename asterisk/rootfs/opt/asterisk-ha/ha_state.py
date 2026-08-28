@@ -96,6 +96,18 @@ def parse_ivr_channels(text):
     return counts
 
 
+def _contact_state(enabled, key, contacts):
+    contact = contacts.get(key) if key else None
+    return {
+        'enabled': bool(enabled),
+        'user': key,
+        'reachable': bool(enabled and contact and contact.get('reachable')),
+        'contact': contact.get('uri') if contact else None,
+        'status': contact.get('status') if contact else ('disabled' if not enabled else 'unregistered'),
+        'rtt_ms': contact.get('rtt_ms') if contact else None,
+    }
+
+
 def build_snapshot(ast, pbx_data):
     """Return a stable JSON-ready snapshot for the Home Assistant integration."""
     version_r = ast('core show version')
@@ -126,16 +138,29 @@ def build_snapshot(ast, pbx_data):
         })
 
     ht = pbx_data.get('ht503') or {}
-    ht_user = str(ht.get('fxo_user') or '').strip()
-    ht_contact = contacts.get(ht_user) if ht_user else None
+    fxo_user = str(ht.get('fxo_user') or '').strip()
+    fxs_extension = str(ht.get('fxs_extension') or '').strip()
+    fxo = _contact_state(bool(ht.get('enabled')), fxo_user, contacts)
+    fxs = _contact_state(bool(ht.get('fxs_enabled')), fxs_extension, contacts)
+    fxs['extension'] = fxs_extension
+    fxs['local_sip_port'] = int(ht.get('fxs_local_sip_port', 5062) or 5062)
+    fxo['local_sip_port'] = int(ht.get('local_sip_port', 5064) or 5064)
+
+    # Keep the original top-level FXO fields for backwards compatibility while
+    # also exposing explicit nested FXS and FXO objects.
     ht503 = {
-        'enabled': bool(ht.get('enabled')),
-        'user': ht_user,
+        'enabled': fxo['enabled'],
+        'user': fxo_user,
         'device_ip': str(ht.get('device_ip') or ''),
-        'reachable': bool(ht.get('enabled') and ht_contact and ht_contact.get('reachable')),
-        'contact': ht_contact.get('uri') if ht_contact else None,
-        'status': ht_contact.get('status') if ht_contact else ('disabled' if not ht.get('enabled') else 'unregistered'),
-        'rtt_ms': ht_contact.get('rtt_ms') if ht_contact else None,
+        'reachable': fxo['reachable'],
+        'contact': fxo['contact'],
+        'status': fxo['status'],
+        'rtt_ms': fxo['rtt_ms'],
+        'fxs_enabled': fxs['enabled'],
+        'fxs_extension': fxs_extension,
+        'fxs_reachable': fxs['reachable'],
+        'fxo': fxo,
+        'fxs': fxs,
     }
 
     sc = pbx_data.get('sipcord') or {}
