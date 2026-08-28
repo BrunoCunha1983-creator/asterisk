@@ -2,7 +2,28 @@
 set -eu
 APP=/opt/asterisk-ha
 CONF=/config/asterisk
-mkdir -p "$CONF" /config/state /share/asterisk-recordings /var/log/asterisk /var/spool/asterisk /var/run/asterisk
+IVR_AUDIO=/share/asterisk-ivr
+mkdir -p "$CONF" /config/state /share/asterisk-recordings "$IVR_AUDIO" /var/log/asterisk /var/spool/asterisk /var/run/asterisk
+
+# Make custom Asterisk sounds persistent. Preserve any image-provided custom
+# sounds before replacing the custom directory with a symlink to /share.
+link_custom_dir() {
+  base="$1"
+  target="$base/custom"
+  mkdir -p "$base"
+  if [ -d "$target" ] && [ ! -L "$target" ]; then
+    cp -an "$target"/. "$IVR_AUDIO"/ 2>/dev/null || true
+    rm -rf "$target"
+  fi
+  ln -sfn "$IVR_AUDIO" "$target"
+}
+
+link_custom_dir /var/lib/asterisk/sounds
+for langdir in /var/lib/asterisk/sounds/*; do
+  [ -d "$langdir" ] || continue
+  [ "$(basename "$langdir")" = "custom" ] && continue
+  link_custom_dir "$langdir"
+done
 
 # Seed editable Asterisk configuration exactly once.
 for f in /etc/asterisk-template/*; do
