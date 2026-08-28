@@ -1,0 +1,32 @@
+name: Validate Asterisk add-on PR
+
+on:
+  pull_request:
+    paths:
+      - 'asterisk/**'
+      - '.github/workflows/validate-pr.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  python:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Compile add-on Python sources
+        run: |
+          python -m py_compile \
+            asterisk/rootfs/opt/asterisk-ha/bootstrap.py \
+            asterisk/rootfs/opt/asterisk-ha/backend.py \
+            asterisk/rootfs/opt/asterisk-ha/ui.py \
+            asterisk/rootfs/opt/asterisk-ha/server.py
+      - name: Check HT503 configuration hooks
+        run: |
+          grep -q 'HT503 / FXO' asterisk/rootfs/opt/asterisk-ha/ui.py
+          grep -q 'from-ht503-fxo' asterisk/rootfs/etc/asterisk-template/extensions.conf
+          grep -q 'auth_username' asterisk/rootfs/etc/asterisk-template/pjsip.conf
