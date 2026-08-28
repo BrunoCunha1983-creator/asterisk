@@ -27,6 +27,7 @@ jobs:
             asterisk/rootfs/opt/asterisk-ha/backend.py \
             asterisk/rootfs/opt/asterisk-ha/ui.py \
             asterisk/rootfs/opt/asterisk-ha/sipcord.py \
+            asterisk/rootfs/opt/asterisk-ha/ivr.py \
             asterisk/rootfs/opt/asterisk-ha/ha_state.py \
             asterisk/rootfs/opt/asterisk-ha/server.py
       - name: Compile Home Assistant integration sources
@@ -39,10 +40,58 @@ jobs:
           python -m json.tool custom_components/asterisk_pbx/translations/pt.json >/dev/null
           python -m json.tool custom_components/asterisk_pbx/translations/en.json >/dev/null
           python -m json.tool hacs.json >/dev/null
+      - name: Test IVR generator
+        env:
+          PYTHONPATH: asterisk/rootfs/opt/asterisk-ha
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          from tempfile import TemporaryDirectory
+          from ivr import ensure_ivr_state, validate_ivrs, render_ivrs, augment_index
+
+          data = {
+              'extensions': [{'extension': '100'}],
+              'ht503': {'enabled': True, 'fxo_user': '218277581'},
+              'sipcord': {'enabled': True},
+              'gsm_dongles': [{'name': 'dongle0'}],
+              'ivrs': [{
+                  'enabled': True,
+                  'id': 'main',
+                  'name': 'Principal',
+                  'extension': '600',
+                  'prompt': 'custom/ivr-main',
+                  'timeout': 5,
+                  'retries': 3,
+                  'fallback_type': 'extension',
+                  'fallback_value': '100',
+                  'options': [
+                      {'digit': '1', 'label': 'Operador', 'type': 'extension', 'value': '100'},
+                      {'digit': '2', 'label': 'Discord', 'type': 'sipcord', 'value': '1515'},
+                  ],
+              }],
+          }
+          data, _ = ensure_ivr_state(data)
+          validate_ivrs(data)
+          with TemporaryDirectory() as d:
+              conf = Path(d)
+              (conf / 'extensions_gui.conf').write_text('; test\n')
+              render_ivrs(conf, data)
+              entry = (conf / 'extensions_gui.conf').read_text()
+              ivr = (conf / 'extensions_ivr_gui.conf').read_text()
+              assert 'exten => 600,1,NoOp(IVR main)' in entry
+              assert '[ivr-main]' in ivr
+              assert 'Background(custom/ivr-main)' in ivr
+              assert 'Dial(PJSIP/1515@sipcord,90)' in ivr
+              assert 'Goto(from-internal,100,1)' in ivr
+          html = "const tabs=['SIPcord / Discord','Trunks SIP']; if(current==='SIPcord / Discord') sipcord(a); if(current==='Trunks SIP') trunks(a); function trunks(a){}"
+          assert "'IVR'" in augment_index(html)
+          PY
       - name: Check integration hooks
         run: |
           grep -q 'HT503 / FXO' asterisk/rootfs/opt/asterisk-ha/ui.py
           grep -q 'from-ht503-fxo' asterisk/rootfs/etc/asterisk-template/extensions.conf
+          grep -q 'extensions_ivr_gui.conf' asterisk/rootfs/etc/asterisk-template/extensions.conf
           grep -q 'auth_username' asterisk/rootfs/etc/asterisk-template/pjsip.conf
           grep -q '/api/ha-state' asterisk/rootfs/opt/asterisk-ha/server.py
+          grep -q "'IVR'" asterisk/rootfs/opt/asterisk-ha/ivr.py
           grep -q 'asterisk_pbx' custom_components/asterisk_pbx/manifest.json
