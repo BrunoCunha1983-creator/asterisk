@@ -44,22 +44,51 @@ jobs:
           python -m json.tool custom_components/asterisk_pbx/translations/en.json >/dev/null
           python -m json.tool hacs.json >/dev/null
 
-      - name: Build final Ingress UI
+      - name: Build final Ingress UI and FXS endpoint
         env:
           PYTHONPATH: asterisk/rootfs/opt/asterisk-ha
         run: |
           python - <<'PY'
           import re
           from pathlib import Path
+          from tempfile import TemporaryDirectory
+          import backend
           import server_entry
 
+          # Start with HT503 FXS enabled but no generic extension entry. The
+          # normalizer must create extension 200 automatically.
           data = {
-              'extensions': [{'extension':'200','callerid':'HT503 FXS','secret':'secret','voicemail_pin':'1234','context':'from-internal'}],
-              'ht503': {'enabled':True,'fxo_user':'218277581','fxs_enabled':True,'fxs_extension':'200'},
+              'extensions': [],
+              'ht503': {
+                  'enabled': True,
+                  'fxo_user': '218277581',
+                  'fxs_enabled': True,
+                  'fxs_extension': '200',
+                  'fxs_callerid': 'Tel Interno',
+                  'fxs_secret': 'test-secret',
+                  'fxs_voicemail_pin': '1234',
+                  'fxs_context': 'from-internal',
+              },
           }
           data, changed, removed = server_entry.normalize_pbx(data)
-          assert data['ht503']['fxs_local_sip_port'] == 5062
+          assert changed
           assert removed == []
+          assert data['ht503']['fxs_local_sip_port'] == 5062
+          ext = next(e for e in data['extensions'] if e['extension'] == '200')
+          assert ext['secret'] == 'test-secret'
+          assert ext['callerid'] == 'Tel Interno'
+
+          # Verify the exact managed PJSIP output contains a real endpoint,
+          # auth and AOR for the FXS extension.
+          with TemporaryDirectory() as d:
+              backend.CONF = Path(d)
+              backend.render_managed(data)
+              pjs = (Path(d) / 'pjsip_gui.conf').read_text()
+              assert '[200]' in pjs
+              assert 'type=endpoint' in pjs
+              assert 'username=200' in pjs
+              assert 'password=test-secret' in pjs
+              assert 'identify_by=username,auth_username' in pjs
 
           html = server_entry.server.INDEX
           assert "'HT503 FXS / FXO'" in html
@@ -69,6 +98,7 @@ jobs:
           assert 'FXO — linha exterior / PSTN' in html
           assert 'Guardar FXS + FXO' in html
           assert 'Gravar pelo telefone' in html
+          assert 'garante automaticamente que a extensão PJSIP correspondente existe' in html
 
           match = re.search(r'<script>(.*)</script>', html, re.S)
           assert match, 'Final HTML has no script block'
@@ -134,4 +164,5 @@ jobs:
           grep -q '/api/ivr-upload' asterisk/rootfs/opt/asterisk-ha/server.py
           grep -q 'server_entry.py' asterisk/rootfs/usr/local/bin/asterisk-ha-start
           grep -q '/share/asterisk-ivr' asterisk/rootfs/usr/local/bin/asterisk-ha-start
+          grep -q 'fxs_secret' asterisk/rootfs/opt/asterisk-ha/ht503.py
           grep -q 'asterisk_pbx' custom_components/asterisk_pbx/manifest.json
