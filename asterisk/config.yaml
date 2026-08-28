@@ -1,5 +1,5 @@
 name: Asterisk 22 PBX + GSM
-version: "0.1.2"
+version: "0.1.3"
 slug: asterisk22_pbx
 description: "Asterisk 22.11 PBX for Home Assistant with PJSIP, AMI, ARI, Ingress GUI and optional chan_dongle GSM"
 arch:
