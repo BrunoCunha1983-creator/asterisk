@@ -26,6 +26,7 @@ jobs:
           python -m py_compile \
             asterisk/rootfs/opt/asterisk-ha/bootstrap.py \
             asterisk/rootfs/opt/asterisk-ha/backend.py \
+            asterisk/rootfs/opt/asterisk-ha/nat.py \
             asterisk/rootfs/opt/asterisk-ha/ui.py \
             asterisk/rootfs/opt/asterisk-ha/ht503.py \
             asterisk/rootfs/opt/asterisk-ha/dashboard_status.py \
@@ -98,6 +99,10 @@ jobs:
               assert 'identify_by=username,auth_username' in pjs
               assert 'allow=ulaw,alaw' in pjs
               assert 'opus' not in pjs.lower(), pjs
+              assert 'rtp_keepalive=15' in pjs
+              assert 'rtp_timeout=30' in pjs
+              assert 'rtp_timeout_hold=300' in pjs
+              assert 'timers_sess_expires=180' in pjs
 
           html = server_entry.server.INDEX
           assert "'HT503 FXS / FXO'" in html
@@ -121,6 +126,39 @@ jobs:
 
       - name: Check final JavaScript syntax
         run: node --check /tmp/asterisk-ui-final.js
+
+      - name: Test automatic SIP and RTP NAT policy
+        env:
+          PYTHONPATH: asterisk/rootfs/opt/asterisk-ha
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          from tempfile import TemporaryDirectory
+          import nat
+
+          with TemporaryDirectory() as d:
+              d = Path(d)
+              pjs = d / 'pjsip.conf'
+              rtp = d / 'rtp.conf'
+              pjs.write_text('[transport-udp]\ntype=transport\nprotocol=udp\nbind=0.0.0.0:5060\nallow_reload=yes\n\n#include pjsip_gui.conf\n')
+              rtp.write_text('[general]\nrtpstart=10000\nrtpend=20000\nice_support=yes\nstunaddr=\n')
+              state = {
+                  'local_net':'192.168.1.0/24',
+                  'external_address':'203.0.113.44',
+                  'sip_port':5060,
+              }
+              nat.patch_transport(pjs, state)
+              nat.patch_rtp(rtp)
+              out = pjs.read_text()
+              assert 'symmetric_transport=yes' in out
+              assert 'local_net=192.168.1.0/24' in out
+              assert 'external_media_address=203.0.113.44' in out
+              assert 'external_signaling_address=203.0.113.44' in out
+              assert 'external_signaling_port=5060' in out
+              assert 'stunaddr=' not in rtp.read_text()
+          assert nat._valid_network('auto') == ''
+          assert nat._valid_network('192.168.1.44/24') == '192.168.1.0/24'
+          PY
 
       - name: Test Asterisk 22 PJSIP reload compatibility
         env:
@@ -213,4 +251,7 @@ jobs:
           grep -q 'module reload res_pjsip.so' asterisk/rootfs/opt/asterisk-ha/server_entry.py
           grep -q 'dashboard_status' asterisk/rootfs/opt/asterisk-ha/server_entry.py
           grep -q "DEFAULT_AUDIO_CODECS='ulaw,alaw'" asterisk/rootfs/opt/asterisk-ha/backend.py
+          grep -q 'rtp_timeout=30' asterisk/rootfs/opt/asterisk-ha/backend.py
+          grep -q 'apply_nat' asterisk/rootfs/opt/asterisk-ha/bootstrap.py
+          grep -q 'symmetric_transport=yes' asterisk/rootfs/opt/asterisk-ha/nat.py
           grep -q 'asterisk_pbx' custom_components/asterisk_pbx/manifest.json
