@@ -32,7 +32,8 @@ jobs:
             asterisk/rootfs/opt/asterisk-ha/ivr_audio.py \
             asterisk/rootfs/opt/asterisk-ha/ivr.py \
             asterisk/rootfs/opt/asterisk-ha/ha_state.py \
-            asterisk/rootfs/opt/asterisk-ha/server.py
+            asterisk/rootfs/opt/asterisk-ha/server.py \
+            asterisk/rootfs/opt/asterisk-ha/server_entry.py
           python -m py_compile custom_components/asterisk_pbx/*.py
 
       - name: Validate JSON files
@@ -50,20 +51,17 @@ jobs:
           python - <<'PY'
           import re
           from pathlib import Path
-          from ui import INDEX
-          from sipcord import augment_index as augment_sipcord
-          from ivr import augment_index as augment_ivr
-          from ht503 import augment_index as augment_ht503, ensure_ht503_state, validate_ht503_state
+          import server_entry
 
           data = {
               'extensions': [{'extension':'200','callerid':'HT503 FXS','secret':'secret','voicemail_pin':'1234','context':'from-internal'}],
               'ht503': {'enabled':True,'fxo_user':'218277581','fxs_enabled':True,'fxs_extension':'200'},
           }
-          data, _ = ensure_ht503_state(data)
+          data, changed, removed = server_entry.normalize_pbx(data)
           assert data['ht503']['fxs_local_sip_port'] == 5062
-          assert validate_ht503_state(data)
+          assert removed == []
 
-          html = augment_ht503(augment_ivr(augment_sipcord(INDEX)))
+          html = server_entry.server.INDEX
           assert "'HT503 FXS / FXO'" in html
           assert "'SIPcord / Discord'" in html
           assert "'IVR'" in html
@@ -79,9 +77,7 @@ jobs:
           PY
 
       - name: Check final JavaScript syntax
-        run: |
-          nl -ba /tmp/asterisk-ui-final.js | sed -n '8,24p'
-          node --check /tmp/asterisk-ui-final.js
+        run: node --check /tmp/asterisk-ui-final.js
 
       - name: Test IVR generator
         env:
@@ -136,5 +132,6 @@ jobs:
           grep -q 'auth_username' asterisk/rootfs/etc/asterisk-template/pjsip.conf
           grep -q '/api/ha-state' asterisk/rootfs/opt/asterisk-ha/server.py
           grep -q '/api/ivr-upload' asterisk/rootfs/opt/asterisk-ha/server.py
+          grep -q 'server_entry.py' asterisk/rootfs/usr/local/bin/asterisk-ha-start
           grep -q '/share/asterisk-ivr' asterisk/rootfs/usr/local/bin/asterisk-ha-start
           grep -q 'asterisk_pbx' custom_components/asterisk_pbx/manifest.json
