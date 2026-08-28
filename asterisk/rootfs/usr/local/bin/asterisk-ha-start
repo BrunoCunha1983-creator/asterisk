@@ -1,0 +1,32 @@
+#!/bin/sh
+set -eu
+APP=/opt/asterisk-ha
+CONF=/config/asterisk
+mkdir -p "$CONF" /config/state /share/asterisk-recordings /var/log/asterisk /var/spool/asterisk /var/run/asterisk
+
+# Seed editable Asterisk configuration exactly once.
+for f in /etc/asterisk-template/*; do
+  name="$(basename "$f")"
+  [ -e "$CONF/$name" ] || cp "$f" "$CONF/$name"
+done
+
+python3 "$APP/bootstrap.py"
+
+# Keep the UI available even if Asterisk fails; diagnostics can then be used.
+python3 "$APP/server.py" &
+UI_PID=$!
+
+VERBOSE="$(python3 - <<'PY'
+import json
+try:
+    print(int(json.load(open('/data/options.json')).get('verbose',3)))
+except Exception:
+    print(3)
+PY
+)"
+
+VFLAGS="$(python3 -c 'import sys; n=max(0,min(9,int(sys.argv[1]))); print("-"+"v"*n if n else "")' "$VERBOSE")"
+asterisk -f -C "$CONF/asterisk.conf" -U root -G root $VFLAGS &
+AST_PID=$!
+trap 'kill "$AST_PID" "$UI_PID" 2>/dev/null || true' INT TERM EXIT
+wait "$AST_PID"

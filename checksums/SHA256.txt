@@ -1,0 +1,4 @@
+# Pacotes v0.1.0 gerados localmente em 2026-08-28
+10726e05f8955deed417f161dc496da4ffb14cb586b2fa1a92251eae87989372  ha-asterisk22-hassio-addon-v0.1.0.zip
+5ef759ab5f441740e2fd2eb453a5d4dea086e165650fd016e911cc928ba8549b  asterisk-22.11.0-with-chan_dongle.tar.gz
+3bd5ee040509a3d3cd9b1ba9520c18e6ec0a7e7981ca68c457dcd36ba3c54d94  asterisk-22.11.0-source.tar.gz

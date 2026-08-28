@@ -1,0 +1,5 @@
+__pycache__/
+*.pyc
+.build-standalone/
+dist/
+asterisk/source/
