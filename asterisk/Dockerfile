@@ -56,8 +56,7 @@ RUN ./configure --with-pjproject-bundled --with-jansson-bundled \
     && make -j"$(nproc)" \
     && make install DESTDIR=/stage
 
-# External chan_dongle. The build is deliberately isolated so the PBX image can
-# still be built if a future Asterisk API change requires a chan_dongle patch.
+# chan_dongle is built directly against the exact Asterisk 22.11.0 headers.
 RUN git clone "$CHAN_DONGLE_REPO" /src/chan_dongle \
     && cd /src/chan_dongle \
     && git checkout "$CHAN_DONGLE_REF" \
@@ -75,9 +74,14 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libedit2 libxml2 libsqlite3-0 libuuid1 libssl3 libncurses6 libcurl4 libsrtp2-1 \
     libopus0 libspeex1 libspeexdsp1 libgsm1 libogg0 libvorbis0a libvorbisenc2 libnewt0.52 \
     && rm -rf /var/lib/apt/lists/*
-COPY --from=builder /stage/ /
+
+# Do not copy /stage wholesale. Asterisk's DESTDIR contains /var/run as a
+# directory while Debian bookworm uses /var/run -> /run, which causes BuildKit
+# to fail with "cannot copy to non-directory". Copy only runtime payloads.
+COPY --from=builder /stage/usr/ /usr/
+COPY --from=builder /stage/var/lib/asterisk/ /var/lib/asterisk/
 COPY rootfs/ /
 RUN chmod +x /usr/local/bin/asterisk-ha-start \
-    && mkdir -p /config /share/asterisk-recordings /var/log/asterisk /var/spool/asterisk /var/run/asterisk
+    && mkdir -p /config /share/asterisk-recordings /var/log/asterisk /var/spool/asterisk /run/asterisk
 EXPOSE 8099/tcp 5038/tcp 8088/tcp 5060/udp 5061/tcp 4569/udp
 ENTRYPOINT ["/usr/local/bin/asterisk-ha-start"]
