@@ -27,6 +27,7 @@ jobs:
             asterisk/rootfs/opt/asterisk-ha/bootstrap.py \
             asterisk/rootfs/opt/asterisk-ha/backend.py \
             asterisk/rootfs/opt/asterisk-ha/nat.py \
+            asterisk/rootfs/opt/asterisk-ha/network.py \
             asterisk/rootfs/opt/asterisk-ha/ui.py \
             asterisk/rootfs/opt/asterisk-ha/ht503.py \
             asterisk/rootfs/opt/asterisk-ha/dashboard_status.py \
@@ -46,7 +47,7 @@ jobs:
           python -m json.tool custom_components/asterisk_pbx/translations/en.json >/dev/null
           python -m json.tool hacs.json >/dev/null
 
-      - name: Build final Ingress UI, FXS endpoint and codec policy
+      - name: Build final Ingress UI, endpoint and RTP policy
         env:
           PYTHONPATH: asterisk/rootfs/opt/asterisk-ha
         run: |
@@ -62,6 +63,16 @@ jobs:
                   {'extension':'100','callerid':'PC','secret':'pc-secret','voicemail_pin':'1234','context':'from-internal'},
                   {'extension':'101','callerid':'Remoto','secret':'remote-secret','voicemail_pin':'1234','context':'from-internal'},
               ],
+              'network': {
+                  'auto_external': False,
+                  'external_address': '203.0.113.44',
+                  'auto_local_nets': False,
+                  'local_nets': ['192.168.1.0/24'],
+                  'rtp_keepalive': 15,
+                  'rtp_timeout': 30,
+                  'rtp_timeout_hold': 300,
+                  'session_timers': True,
+              },
               'ht503': {
                   'enabled': True,
                   'fxo_user': '218277581',
@@ -90,24 +101,34 @@ jobs:
           assert ext['callerid'] == 'Tel Interno'
 
           with TemporaryDirectory() as d:
-              backend.CONF = Path(d)
-              backend.render_managed(data)
-              pjs = (Path(d) / 'pjsip_gui.conf').read_text()
+              conf = Path(d)
+              backend.CONF = conf
+              server_entry.server.CONF = conf
+              (conf/'pjsip.conf').write_text('[global]\ntype=global\n\n[transport-udp]\ntype=transport\nprotocol=udp\nbind=0.0.0.0:5060\nallow_reload=yes\n\n#include pjsip_gui.conf\n')
+              server_entry.server.render_managed(data)
+              pjs = (conf / 'pjsip_gui.conf').read_text()
+              transport = (conf / 'pjsip.conf').read_text()
               assert '[100]' in pjs and '[101]' in pjs and '[200]' in pjs
               assert 'username=200' in pjs
               assert 'password=test-secret' in pjs
               assert 'identify_by=username,auth_username' in pjs
               assert 'allow=ulaw,alaw' in pjs
               assert 'opus' not in pjs.lower(), pjs
-              assert 'rtp_keepalive=15' in pjs
-              assert 'rtp_timeout=30' in pjs
-              assert 'rtp_timeout_hold=300' in pjs
-              assert 'timers_sess_expires=180' in pjs
+              assert pjs.count('rtp_keepalive=15') == 4, pjs
+              assert pjs.count('rtp_timeout=30') == 4, pjs
+              assert pjs.count('rtp_timeout_hold=300') == 4, pjs
+              assert pjs.count('timers_sess_expires=180') == 4, pjs
+              assert 'external_media_address=203.0.113.44' in transport
+              assert 'external_signaling_address=203.0.113.44' in transport
+              assert 'local_net=192.168.1.0/24' in transport
+              assert transport.index('external_media_address=203.0.113.44') < transport.index('#include pjsip_gui.conf')
+              assert transport.index('local_net=192.168.1.0/24') < transport.index('#include pjsip_gui.conf')
 
           html = server_entry.server.INDEX
           assert "'HT503 FXS / FXO'" in html
           assert "'SIPcord / Discord'" in html
           assert "'IVR'" in html
+          assert "'Rede / NAT'" in html
           assert 'FXS — telefone analógico' in html
           assert 'FXO — linha exterior / PSTN' in html
           assert 'Guardar FXS + FXO' in html
@@ -116,6 +137,8 @@ jobs:
           assert 'Extensões PJSIP' in html
           assert 'Grandstream HT503' in html
           assert 'SIPcord / Discord' in html
+          assert 'RTP timeout chamada' in html
+          assert 'Detetar IP público/LAN' in html
           assert "api('api/ha-state')" in html
 
           match = re.search(r'<script>(.*)</script>', html, re.S)
@@ -155,6 +178,10 @@ jobs:
               assert 'external_media_address=203.0.113.44' in out
               assert 'external_signaling_address=203.0.113.44' in out
               assert 'external_signaling_port=5060' in out
+              include = out.index('#include pjsip_gui.conf')
+              assert out.index('symmetric_transport=yes') < include
+              assert out.index('local_net=192.168.1.0/24') < include
+              assert out.index('external_media_address=203.0.113.44') < include
               assert 'stunaddr=' not in rtp.read_text()
           assert nat._valid_network('auto') == ''
           assert nat._valid_network('192.168.1.44/24') == '192.168.1.0/24'
@@ -250,8 +277,10 @@ jobs:
           grep -q 'fxs_secret' asterisk/rootfs/opt/asterisk-ha/ht503.py
           grep -q 'module reload res_pjsip.so' asterisk/rootfs/opt/asterisk-ha/server_entry.py
           grep -q 'dashboard_status' asterisk/rootfs/opt/asterisk-ha/server_entry.py
+          grep -q 'augment_network_index' asterisk/rootfs/opt/asterisk-ha/server_entry.py
           grep -q "DEFAULT_AUDIO_CODECS='ulaw,alaw'" asterisk/rootfs/opt/asterisk-ha/backend.py
           grep -q 'rtp_timeout=30' asterisk/rootfs/opt/asterisk-ha/backend.py
           grep -q 'apply_nat' asterisk/rootfs/opt/asterisk-ha/bootstrap.py
           grep -q 'symmetric_transport=yes' asterisk/rootfs/opt/asterisk-ha/nat.py
+          grep -q 'RTP timeout chamada' asterisk/rootfs/opt/asterisk-ha/network.py
           grep -q 'asterisk_pbx' custom_components/asterisk_pbx/manifest.json
