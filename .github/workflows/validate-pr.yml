@@ -26,6 +26,7 @@ jobs:
             asterisk/rootfs/opt/asterisk-ha/bootstrap.py \
             asterisk/rootfs/opt/asterisk-ha/backend.py \
             asterisk/rootfs/opt/asterisk-ha/ui.py \
+            asterisk/rootfs/opt/asterisk-ha/ht503.py \
             asterisk/rootfs/opt/asterisk-ha/sipcord.py \
             asterisk/rootfs/opt/asterisk-ha/ivr_audio.py \
             asterisk/rootfs/opt/asterisk-ha/ivr.py \
@@ -41,6 +42,45 @@ jobs:
           python -m json.tool custom_components/asterisk_pbx/translations/pt.json >/dev/null
           python -m json.tool custom_components/asterisk_pbx/translations/en.json >/dev/null
           python -m json.tool hacs.json >/dev/null
+      - name: Test HT503 FXS and FXO GUI
+        env:
+          PYTHONPATH: asterisk/rootfs/opt/asterisk-ha
+        run: |
+          python - <<'PY'
+          from ui import INDEX
+          from sipcord import ensure_sipcord_state, augment_index as augment_sipcord_index
+          from ivr import augment_index as augment_ivr_index
+          from ht503 import validate_ht503_state
+
+          data = {
+              'extensions': [{
+                  'extension': '200',
+                  'callerid': 'HT503 FXS',
+                  'secret': 'secret',
+                  'voicemail_pin': '1234',
+                  'context': 'from-internal',
+              }],
+              'ht503': {
+                  'enabled': True,
+                  'fxo_user': '218277581',
+                  'fxs_enabled': True,
+                  'fxs_extension': '200',
+              },
+              'sip_trunks': [],
+          }
+          data, changed = ensure_sipcord_state(data)
+          assert data['ht503']['fxs_local_sip_port'] == 5062
+          assert validate_ht503_state(data)
+          html = augment_ivr_index(augment_sipcord_index(INDEX))
+          assert "'HT503 FXS / FXO'" in html
+          assert "'SIPcord / Discord'" in html
+          assert "'IVR'" in html
+          assert 'FXS — telefone analógico' in html
+          assert 'FXO — linha exterior / PSTN' in html
+          assert 'Guardar FXS + FXO' in html
+          assert 'fxs_extension' in html
+          assert 'function loadHTFXS' in html
+          PY
       - name: Test IVR generator
         env:
           PYTHONPATH: asterisk/rootfs/opt/asterisk-ha
@@ -136,6 +176,10 @@ jobs:
       - name: Check integration hooks
         run: |
           grep -q 'HT503 / FXO' asterisk/rootfs/opt/asterisk-ha/ui.py
+          grep -q 'HT503 FXS / FXO' asterisk/rootfs/opt/asterisk-ha/ht503.py
+          grep -q 'fxs_extension' asterisk/rootfs/opt/asterisk-ha/ht503.py
+          grep -q 'ht503_fxs' custom_components/asterisk_pbx/binary_sensor.py
+          grep -q 'ht503_fxs_rtt' custom_components/asterisk_pbx/sensor.py
           grep -q 'from-ht503-fxo' asterisk/rootfs/etc/asterisk-template/extensions.conf
           grep -q 'extensions_ivr_gui.conf' asterisk/rootfs/etc/asterisk-template/extensions.conf
           grep -q 'auth_username' asterisk/rootfs/etc/asterisk-template/pjsip.conf

@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 import re
 
+from ht503 import ensure_ht503_state, augment_index as augment_ht503_index
+
 DEFAULT_SIPCORD = {
     'enabled': False,
     'server': 'bridge-eu1.sipcord.net',
@@ -30,10 +32,11 @@ def normalize_pattern(v):
 
 
 def ensure_sipcord_state(data):
-    """Add/migrate SIPcord state and remove conflicting generic SIPcord trunks."""
+    """Add/migrate SIPcord state and normalize shared HT503 metadata."""
     if not isinstance(data, dict):
         data = {}
-    changed = False
+    data, ht503_changed = ensure_ht503_state(data)
+    changed = bool(ht503_changed)
     sc = data.get('sipcord')
     trunks = list(data.get('sip_trunks') or [])
 
@@ -136,7 +139,7 @@ def render_sipcord(conf, data):
 
 
 def augment_index(index):
-    """Inject a dedicated SIPcord tab into the existing single-file GUI."""
+    """Inject SIPcord and then upgrade the HT503 page to FXS + FXO."""
     if "'SIPcord / Discord'" not in index:
         index = index.replace(
             "'HT503 / FXO','Trunks SIP'",
@@ -171,4 +174,4 @@ async function saveSIPcord(){
 }
 '''
         index = index.replace('function trunks(a){', js + '\nfunction trunks(a){')
-    return index
+    return augment_ht503_index(index)
