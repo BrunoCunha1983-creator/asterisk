@@ -23,8 +23,6 @@ def parse_contacts(text):
         if not line.startswith('Contact:'):
             continue
         body = line.split(':', 1)[1].strip()
-        # Typical Asterisk 22 output:
-        # 101/sip:101@192.168.1.202:49051;rinstance=...  HASH  Avail  23.831
         parts = body.split()
         if not parts or '/' not in parts[0]:
             continue
@@ -32,8 +30,6 @@ def parse_contacts(text):
         key, uri = key_uri.split('/', 1)
         status = ''
         rtt_ms = None
-        # Hash is normally column 2, status column 3, RTT column 4.
-        # Be liberal because Asterisk changes spacing/labels between versions.
         for idx, part in enumerate(parts[1:], start=1):
             low = part.lower()
             if low in ('avail', 'available', 'unavail', 'unavailable', 'nonqual', 'unknown'):
@@ -61,7 +57,6 @@ def parse_dongles(text):
         if not re.match(r'^[A-Za-z0-9_.-]+\s+', line):
             continue
         parts = line.split()
-        # chan_dongle usually starts: Device Group State RSSI Mode ...
         name = parts[0]
         if name.lower() in ('device', 'id'):
             continue
@@ -82,10 +77,30 @@ def parse_dongles(text):
     return devices
 
 
+def parse_ivr_channels(text):
+    """Count live Asterisk channels currently executing inside each IVR context."""
+    counts = {}
+    for raw in (text or '').splitlines():
+        line = raw.strip()
+        if not line or '!' not in line:
+            continue
+        parts = line.split('!')
+        if len(parts) < 2:
+            continue
+        context = parts[1].strip()
+        if not context.startswith('ivr-'):
+            continue
+        ivr_id = context[4:]
+        if ivr_id:
+            counts[ivr_id] = counts.get(ivr_id, 0) + 1
+    return counts
+
+
 def build_snapshot(ast, pbx_data):
     """Return a stable JSON-ready snapshot for the Home Assistant integration."""
     version_r = ast('core show version')
     channels_r = ast('core show channels count')
+    channels_concise_r = ast('core show channels concise')
     contacts_r = ast('pjsip show contacts')
     dongle_r = ast('dongle show devices')
 
@@ -93,6 +108,7 @@ def build_snapshot(ast, pbx_data):
     channels_text = channels_r.get('output') or ''
     contacts = parse_contacts(contacts_r.get('output') or '')
     dongles = parse_dongles(dongle_r.get('output') or '')
+    ivr_channel_counts = parse_ivr_channels(channels_concise_r.get('output') or '')
 
     extensions = []
     for ext in (pbx_data.get('extensions') or []):
@@ -136,7 +152,26 @@ def build_snapshot(ast, pbx_data):
         'rtt_ms': sc_contact.get('rtt_ms') if sc_contact else None,
     }
 
+    ivrs = []
+    for raw in (pbx_data.get('ivrs') or []):
+        ivr_id = str(raw.get('id') or '').strip()
+        if not ivr_id:
+            continue
+        active_channels = int(ivr_channel_counts.get(ivr_id, 0))
+        ivrs.append({
+            'id': ivr_id,
+            'name': str(raw.get('name') or ivr_id),
+            'extension': str(raw.get('extension') or ''),
+            'enabled': bool(raw.get('enabled', True)),
+            'prompt': str(raw.get('prompt') or ''),
+            'options_count': len(raw.get('options') or []),
+            'active_channels': active_channels,
+            'active': active_channels > 0,
+        })
+
     registered = sum(1 for e in extensions if e['registered'])
+    ivrs_enabled = sum(1 for i in ivrs if i['enabled'])
+    ivr_active_channels = sum(i['active_channels'] for i in ivrs)
     return {
         'online': bool(version_r.get('ok')),
         'version': version_text,
@@ -149,6 +184,11 @@ def build_snapshot(ast, pbx_data):
         'extensions': extensions,
         'ht503': ht503,
         'sipcord': sipcord,
+        'ivrs_total': len(ivrs),
+        'ivrs_enabled': ivrs_enabled,
+        'ivr_active_channels': ivr_active_channels,
+        'ivr_in_use': ivr_active_channels > 0,
+        'ivrs': ivrs,
         'sip_trunks_total': len(pbx_data.get('sip_trunks') or []),
         'gsm_dongles_total': len(dongles),
         'gsm_dongles_connected': sum(1 for d in dongles if d['connected']),
