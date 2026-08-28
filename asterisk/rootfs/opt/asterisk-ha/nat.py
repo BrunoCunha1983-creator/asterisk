@@ -16,6 +16,16 @@ def _valid_ip(value):
         return ''
 
 
+def _valid_network(value):
+    raw = str(value or '').strip()
+    if not raw or raw.lower() == 'auto':
+        return ''
+    try:
+        return str(ipaddress.ip_network(raw, strict=False))
+    except Exception:
+        return ''
+
+
 def detect_local_ip():
     s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     try:
@@ -57,7 +67,7 @@ def auto_local_net(local_ip):
 def resolve_nat(options):
     options = options or {}
     local_ip = detect_local_ip()
-    local_net = str(options.get('local_net') or '').strip() or auto_local_net(local_ip)
+    local_net = _valid_network(options.get('local_net')) or auto_local_net(local_ip)
     manual = _valid_ip(options.get('external_address', ''))
     external = manual
     source = 'manual' if manual else ''
@@ -83,7 +93,10 @@ def patch_transport(path, nat):
     path = Path(path)
     text = path.read_text(errors='ignore')
     lines = text.splitlines()
-    managed = {'external_media_address', 'external_signaling_address', 'external_signaling_port', 'local_net'}
+    managed = {
+        'external_media_address', 'external_signaling_address',
+        'external_signaling_port', 'local_net', 'symmetric_transport'
+    }
     out = []
     in_transport = False
     inserted = False
@@ -94,6 +107,7 @@ def patch_transport(path, nat):
             return
         external = nat.get('external_address') or ''
         local_net = nat.get('local_net') or ''
+        out.append('symmetric_transport=yes')
         if local_net:
             out.append(f'local_net={local_net}')
         if external:
