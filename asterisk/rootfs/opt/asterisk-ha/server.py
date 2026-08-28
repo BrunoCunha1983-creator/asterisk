@@ -6,6 +6,7 @@ import json, re
 from backend import CONF, PBX, SEC, ast, load_json, save_json, token, render_managed, run, usb_ports
 from ui import INDEX
 from sipcord import ensure_sipcord_state, render_sipcord, augment_index
+from ha_state import build_snapshot
 
 INDEX = augment_index(INDEX)
 
@@ -97,6 +98,12 @@ class H(BaseHTTPRequestHandler):
         if path=='/api/status':
             v=ast('core show version'); ch=ast('core show channels count'); m=re.search(r'(\d+) active channel',ch['output'])
             self.sendj({'running':v['ok'],'version':v['output'].strip(),'channels':int(m.group(1)) if m else 0}); return
+        if path=='/api/ha-state':
+            try:
+                self.sendj(build_snapshot(ast, load_pbx_state()))
+            except Exception as e:
+                self.sendj({'online':False,'error':str(e)},500)
+            return
         if path=='/api/pbx': self.sendj(load_pbx_state()); return
         if path=='/api/usb': self.sendj(usb_ports()); return
         if path=='/api/calls': self.sendj({'channels':ast('core show channels concise')['output'],'endpoints':ast('pjsip show endpoints')['output'],'queues':ast('queue show')['output'],'confbridge':ast('confbridge list')['output']}); return
