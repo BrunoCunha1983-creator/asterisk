@@ -28,6 +28,42 @@ for p in CONF.glob('*.conf'):
     for k,v in repls.items(): text=text.replace(k,v)
     if text!=old: p.write_text(text)
 
+# Keep a numeric Echo Test in the persistent dialplan. The add-on seeds
+# extensions.conf only on first install, so upgrades must migrate existing
+# installations explicitly. 6000 avoids softphones that intercept star codes.
+extensions_conf=CONF/'extensions.conf'
+if extensions_conf.exists():
+    text=extensions_conf.read_text(errors='ignore')
+    start='; ECHO TEST MANAGED BY ASTERISK HA\n'
+    end='; END ECHO TEST MANAGED BY ASTERISK HA\n'
+    text=re.sub(
+        r'; ECHO TEST MANAGED BY ASTERISK HA\n.*?; END ECHO TEST MANAGED BY ASTERISK HA\n?',
+        '', text, flags=re.S
+    )
+    text=re.sub(r'^\s*exten\s*=>\s*\*43\s*,\s*1\s*,\s*Echo\(\)\s*\n?', '', text, flags=re.I|re.M)
+    echo_block=(
+        start
+        + 'exten => 6000,1,NoOp(Asterisk RTP Echo Test)\n'
+        + ' same => n,Answer()\n'
+        + ' same => n,Wait(1)\n'
+        + ' same => n,PlayTones(1000/500)\n'
+        + ' same => n,Wait(1)\n'
+        + ' same => n,StopPlayTones()\n'
+        + ' same => n,Echo()\n'
+        + ' same => n,Hangup()\n'
+        + 'exten => *43,1,Goto(from-internal,6000,1)\n'
+        + end
+    )
+    if re.search(r'^\s*\[from-internal\]\s*$', text, re.I|re.M):
+        text=re.sub(
+            r'(^\s*\[from-internal\]\s*\n)',
+            lambda m: m.group(1)+echo_block,
+            text,
+            count=1,
+            flags=re.I|re.M,
+        )
+        extensions_conf.write_text(text)
+
 # Configure PJSIP/RTP NAT after template substitutions. This keeps LAN media on
 # the private address while advertising the public address to remote phones.
 try:
