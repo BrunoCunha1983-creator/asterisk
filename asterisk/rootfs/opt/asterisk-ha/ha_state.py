@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+from pathlib import Path
 import re
 import time
 
@@ -48,7 +49,12 @@ def parse_contacts(text):
 
 
 def parse_dongles(text):
-    """Parse a useful subset of `dongle show devices` without relying on exact columns."""
+    """Parse a useful subset of `dongle show devices` without relying on exact columns.
+
+    These rows describe chan_dongle configuration/runtime state, not necessarily
+    physical USB presence. A configured NotConnected dongle must therefore not
+    be counted as physically detected by itself.
+    """
     devices = []
     for raw in (text or '').splitlines():
         line = raw.strip()
@@ -74,6 +80,82 @@ def parse_dongles(text):
             'rssi': rssi,
             'raw': line,
         })
+    return devices
+
+
+def _device_node_present(value):
+    path = str(value or '').strip()
+    if not path:
+        return False
+    try:
+        return Path(path).exists()
+    except Exception:
+        return False
+
+
+def build_gsm_devices(runtime_devices, configured_devices):
+    """Merge configured chan_dongle entries with real device-node presence.
+
+    `dongle show devices` can list a stale/configured modem even when Proxmox has
+    not passed any USB serial ports into the VM/container. For managed dongles,
+    physical presence is based on their configured audio/data device nodes.
+    A manually configured runtime dongle that is actually connected is retained
+    for backwards compatibility.
+    """
+    runtime_by_name = {
+        str(d.get('name') or '').strip(): d
+        for d in (runtime_devices or [])
+        if str(d.get('name') or '').strip()
+    }
+    devices = []
+    seen = set()
+
+    for cfg in (configured_devices or []):
+        if not isinstance(cfg, dict):
+            continue
+        name = str(cfg.get('name') or '').strip()
+        if not name:
+            continue
+        seen.add(name)
+        runtime = runtime_by_name.get(name) or {}
+        audio = str(cfg.get('audio') or '').strip()
+        data = str(cfg.get('data') or '').strip()
+        present_nodes = [p for p in (audio, data) if p and _device_node_present(p)]
+        present = bool(present_nodes)
+        connected = bool(present and runtime.get('connected'))
+        state = str(runtime.get('state') or ('present' if present else 'absent'))
+        devices.append({
+            'name': name,
+            'configured': True,
+            'present': present,
+            'connected': connected,
+            'state': state,
+            'audio': audio or None,
+            'data': data or None,
+            'present_nodes': present_nodes,
+            'rssi': runtime.get('rssi'),
+            'raw': runtime.get('raw'),
+        })
+
+    # Preserve manually maintained dongle.conf setups. Only a runtime device
+    # that chan_dongle reports as connected is treated as physically present
+    # when it has no managed PBX entry to supply device-node paths.
+    for name, runtime in runtime_by_name.items():
+        if name in seen or not runtime.get('connected'):
+            continue
+        devices.append({
+            'name': name,
+            'configured': False,
+            'present': True,
+            'connected': True,
+            'state': runtime.get('state') or 'connected',
+            'audio': None,
+            'data': None,
+            'present_nodes': [],
+            'rssi': runtime.get('rssi'),
+            'raw': runtime.get('raw'),
+        })
+
     return devices
 
 
@@ -119,7 +201,9 @@ def build_snapshot(ast, pbx_data):
     version_text = (version_r.get('output') or '').strip()
     channels_text = channels_r.get('output') or ''
     contacts = parse_contacts(contacts_r.get('output') or '')
-    dongles = parse_dongles(dongle_r.get('output') or '')
+    runtime_dongles = parse_dongles(dongle_r.get('output') or '')
+    configured_dongles = list(pbx_data.get('gsm_dongles') or [])
+    dongles = build_gsm_devices(runtime_dongles, configured_dongles)
     ivr_channel_counts = parse_ivr_channels(channels_concise_r.get('output') or '')
 
     extensions = []
@@ -197,6 +281,9 @@ def build_snapshot(ast, pbx_data):
     registered = sum(1 for e in extensions if e['registered'])
     ivrs_enabled = sum(1 for i in ivrs if i['enabled'])
     ivr_active_channels = sum(i['active_channels'] for i in ivrs)
+    gsm_configured = sum(1 for d in dongles if d.get('configured'))
+    gsm_present = sum(1 for d in dongles if d.get('present'))
+    gsm_connected = sum(1 for d in dongles if d.get('connected'))
     return {
         'online': bool(version_r.get('ok')),
         'version': version_text,
@@ -215,8 +302,12 @@ def build_snapshot(ast, pbx_data):
         'ivr_in_use': ivr_active_channels > 0,
         'ivrs': ivrs,
         'sip_trunks_total': len(pbx_data.get('sip_trunks') or []),
-        'gsm_dongles_total': len(dongles),
-        'gsm_dongles_connected': sum(1 for d in dongles if d['connected']),
+        # Backwards-compatible key: it now means physically present dongles,
+        # not merely rows returned by `dongle show devices`.
+        'gsm_dongles_total': gsm_present,
+        'gsm_dongles_configured': gsm_configured,
+        'gsm_dongles_absent': max(0, gsm_configured - gsm_present),
+        'gsm_dongles_connected': gsm_connected,
         'gsm_dongles': dongles,
         'updated_at': int(time.time()),
     }
