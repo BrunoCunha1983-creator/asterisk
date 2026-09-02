@@ -39,23 +39,27 @@ function dashboardExtensionCard(e){
   return dashboardStatusCard(`Extensão ${e.extension}`,true,!!e.registered,e.status,[`<b>Caller ID:</b> ${esc(e.callerid||e.extension)}`,contact,`<b>RTT:</b> ${dashboardRtt(e.rtt_ms)}`]);
 }
 async function dashboard(a){
-  let h={};
+  let h={}, sec={};
   try{h=await api('api/ha-state')}catch(e){h={online:false,error:String(e)}}
+  try{sec=await api('api/security')}catch(e){sec={running:false,error:String(e)}}
   let exts=(h.extensions||[]).slice().sort((x,y)=>String(x.extension).localeCompare(String(y.extension),undefined,{numeric:true}));
   let ht=h.ht503||{}, fxs=ht.fxs||{}, fxo=ht.fxo||{}, sc=h.sipcord||{};
   let extCards=exts.length?exts.map(dashboardExtensionCard).join(''):'<div class="status-card"><div class="status-meta">Nenhuma extensão configurada.</div></div>';
   let fxsCard=dashboardStatusCard('HT503 FXS',fxs.enabled,fxs.reachable,fxs.status,[`<b>Extensão:</b> ${esc(fxs.extension||ht.fxs_extension||'—')}`,`<b>Contacto:</b> ${esc(fxs.contact||'sem contacto')}`,`<b>RTT:</b> ${dashboardRtt(fxs.rtt_ms)}`]);
   let fxoCard=dashboardStatusCard('HT503 FXO',fxo.enabled,fxo.reachable,fxo.status,[`<b>User:</b> ${esc(fxo.user||ht.user||'—')}`,`<b>Contacto:</b> ${esc(fxo.contact||'sem contacto')}`,`<b>RTT:</b> ${dashboardRtt(fxo.rtt_ms)}`]);
   let scCard=dashboardStatusCard('SIPcord / Discord',sc.enabled,sc.reachable,sc.status,[`<b>Servidor:</b> ${esc(sc.server||'—')}${sc.port?':'+esc(sc.port):''}`,`<b>Contacto:</b> ${esc(sc.contact||'sem contacto')}`,`<b>RTT:</b> ${dashboardRtt(sc.rtt_ms)}`,`<b>Padrão:</b> ${esc(sc.dial_pattern||'—')}`]);
+  let secCard=dashboardStatusCard('Fail2ban',true,!!sec.running,sec.running?'ativo':'offline',[`<b>Jails:</b> ${esc((sec.jails||[]).join(', ')||'—')}`,`<b>Banidos agora:</b> ${esc(sec.currently_banned||0)}`,`<b>Total de bans:</b> ${esc(sec.total_banned||0)}`,sec.banned_ips&&sec.banned_ips.length?`<b>IPs:</b> ${esc(sec.banned_ips.join(', '))}`:'']);
   a.innerHTML=`
   <div class=grid>
     <div class=card><div class=sub>Asterisk</div><div class="big ${h.online?'ok':'bad'}">${h.online?'ONLINE':'OFFLINE'}</div><pre>${esc(h.version||h.error||'')}</pre></div>
     <div class=card><div class=sub>Canais ativos</div><div class=big>${h.active_channels||0}</div><div class=sub>Chamadas ativas: ${h.active_calls||0}</div></div>
     <div class=card><div class=sub>Extensões</div><div class=big>${h.extensions_registered||0}/${h.extensions_total||0}</div><div class=sub>Reachable / configuradas</div></div>
     <div class=card><div class=sub>IVR</div><div class=big>${h.ivrs_enabled||0}</div><div class=sub>Canais em IVR: ${h.ivr_active_channels||0}</div></div>
-    <div class=card><div class=sub>Dongles GSM</div><div class=big>${h.gsm_dongles_connected||0}/${h.gsm_dongles_total||0}</div><div class=sub>Ligados / detetados</div></div>
+    <div class=card><div class=sub>Dongles GSM</div><div class=big>${h.gsm_dongles_connected||0}/${h.gsm_dongles_total||0}</div><div class=sub>Ligados / presentes · configurados: ${h.gsm_dongles_configured||0}</div></div>
+    <div class=card><div class=sub>Segurança</div><div class="big ${sec.running?'ok':'bad'}">${sec.running?'PROTEGIDO':'OFFLINE'}</div><div class=sub>Bans ativos: ${sec.currently_banned||0}</div></div>
   </div>
   <div class="card status-section"><h2>Extensões PJSIP</h2><div class=status-summary><span class=pill>Reachable: ${h.extensions_registered||0}</span><span class=pill>Offline: ${h.extensions_unregistered||0}</span><span class=pill>Total: ${h.extensions_total||0}</span></div><div class=status-grid>${extCards}</div></div>
+  <div class="card status-section"><h2>Segurança</h2><div class=status-grid>${secCard}</div></div>
   <div class="card status-section"><h2>Grandstream HT503</h2><div class=status-grid>${fxsCard}${fxoCard}</div></div>
   <div class="card status-section"><h2>SIPcord</h2><div class=status-grid>${scCard}</div></div>
   <div class=actions><button class="btn primary" onclick="cmd('core reload')">Reload Asterisk</button><button class=btn onclick="cmd('pjsip reload')">Reload PJSIP</button><button class=btn onclick="cmd('module reload chan_dongle.so')">Reload chan_dongle</button><button class=btn onclick="dashboard(E('#app'))">Atualizar estados</button></div>`;
