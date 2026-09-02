@@ -1,7 +1,7 @@
 name: Asterisk 22 PBX + GSM
-version: "0.2.10"
+version: "0.2.11"
 slug: asterisk22_pbx
-description: "Asterisk 22.11 PBX for Home Assistant with real GSM presence detection, numeric 6000 RTP Echo Test diagnostics, SIPcord RTP keepalive/NAT audio hardening, external SIP/RTP NAT handling, remote audio and hangup recovery, separated live Dashboard status panels, unified ulaw/alaw codecs, HT503 FXS/FXO, Asterisk 22 compatible PJSIP reload, SIPcord/Discord, IVR audio manager, Home Assistant entities, AMI, ARI, Ingress GUI and optional chan_dongle GSM"
+description: "Asterisk 22.11 PBX for Home Assistant with Fail2ban SIP/Web protection, direct-public WebGUI blocking, real GSM presence detection, numeric 6000 RTP Echo Test diagnostics, SIPcord RTP keepalive/NAT audio hardening, external SIP/RTP NAT handling, remote audio and hangup recovery, separated live Dashboard status panels, unified ulaw/alaw codecs, HT503 FXS/FXO, Asterisk 22 compatible PJSIP reload, SIPcord/Discord, IVR audio manager, Home Assistant entities, AMI, ARI, Ingress GUI and optional chan_dongle GSM"
 arch:
   - amd64
   - aarch64
@@ -13,6 +13,8 @@ ingress_port: 8099
 panel_icon: mdi:phone-classic
 panel_title: Asterisk PBX
 host_network: true
+privileged:
+  - NET_ADMIN
 usb: true
 uart: true
 udev: true
@@ -36,6 +38,12 @@ options:
   external_address: auto
   local_net: auto
   chan_dongle: true
+  fail2ban_enabled: true
+  fail2ban_bantime: 3600
+  fail2ban_findtime: 600
+  fail2ban_maxretry: 5
+  fail2ban_web_maxretry: 10
+  fail2ban_ignoreip: "127.0.0.1/8 ::1 10.0.0.0/8 172.16.0.0/12 192.168.0.0/16 100.64.0.0/10 fc00::/7"
   verbose: 3
 schema:
   timezone: str
@@ -49,4 +57,10 @@ schema:
   external_address: str
   local_net: str
   chan_dongle: bool
+  fail2ban_enabled: bool
+  fail2ban_bantime: int(60,604800)
+  fail2ban_findtime: int(30,86400)
+  fail2ban_maxretry: int(2,50)
+  fail2ban_web_maxretry: int(2,100)
+  fail2ban_ignoreip: str
   verbose: int(0,9)

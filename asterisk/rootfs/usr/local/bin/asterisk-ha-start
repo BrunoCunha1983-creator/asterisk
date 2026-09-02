@@ -3,7 +3,7 @@ set -eu
 APP=/opt/asterisk-ha
 CONF=/config/asterisk
 IVR_AUDIO=/share/asterisk-ivr
-mkdir -p "$CONF" /config/state /share/asterisk-recordings "$IVR_AUDIO" /var/log/asterisk /var/spool/asterisk /var/run/asterisk
+mkdir -p "$CONF" /config/state /share/asterisk-recordings "$IVR_AUDIO" /var/log/asterisk /var/spool/asterisk /var/run/asterisk /run/fail2ban /data/fail2ban
 
 # Make custom Asterisk sounds persistent. Preserve any image-provided custom
 # sounds before replacing the custom directory with a symlink to /share.
@@ -33,6 +33,31 @@ done
 
 python3 "$APP/bootstrap.py"
 
+# Fail2ban is deliberately non-fatal for PBX availability. If firewall setup
+# is unavailable, Asterisk still starts and the Dashboard reports protection
+# as offline instead of taking working telephony down.
+F2B_STARTED=0
+F2B_ENABLED="$(python3 - <<'PY'
+import json
+try:
+    print('1' if json.load(open('/data/options.json')).get('fail2ban_enabled', True) else '0')
+except Exception:
+    print('1')
+PY
+)"
+if [ "$F2B_ENABLED" = "1" ]; then
+  if python3 "$APP/fail2ban_setup.py" >/data/fail2ban/generated.json 2>/data/fail2ban/setup-error.log \
+     && fail2ban-client -t >/data/fail2ban/config-test.log 2>&1 \
+     && fail2ban-client -x start >>/data/fail2ban/config-test.log 2>&1; then
+    F2B_STARTED=1
+    echo "[SECURITY] Fail2ban ativo: asterisk-pjsip + asterisk-web"
+  else
+    echo "[SECURITY] AVISO: Fail2ban não arrancou; PBX continua disponível. Ver /data/fail2ban/*.log"
+  fi
+else
+  echo "[SECURITY] Fail2ban desativado nas opções do add-on"
+fi
+
 # Keep the UI available even if Asterisk fails; diagnostics can then be used.
 # server_entry.py applies the HT503 FXS/FXO module over the base SIPcord/IVR server.
 python3 "$APP/server_entry.py" &
@@ -50,5 +75,9 @@ PY
 VFLAGS="$(python3 -c 'import sys; n=max(0,min(9,int(sys.argv[1]))); print("-"+"v"*n if n else "")' "$VERBOSE")"
 asterisk -f -C "$CONF/asterisk.conf" -U root -G root $VFLAGS &
 AST_PID=$!
-trap 'kill "$AST_PID" "$UI_PID" 2>/dev/null || true' INT TERM EXIT
+cleanup() {
+  kill "$AST_PID" "$UI_PID" 2>/dev/null || true
+  if [ "$F2B_STARTED" = "1" ]; then fail2ban-client stop >/dev/null 2>&1 || true; fi
+}
+trap cleanup INT TERM EXIT
 wait "$AST_PID"

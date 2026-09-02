@@ -35,6 +35,8 @@ jobs:
             asterisk/rootfs/opt/asterisk-ha/ivr_audio.py \
             asterisk/rootfs/opt/asterisk-ha/ivr.py \
             asterisk/rootfs/opt/asterisk-ha/ha_state.py \
+            asterisk/rootfs/opt/asterisk-ha/fail2ban_setup.py \
+            asterisk/rootfs/opt/asterisk-ha/security_status.py \
             asterisk/rootfs/opt/asterisk-ha/server.py \
             asterisk/rootfs/opt/asterisk-ha/server_entry.py
           python -m py_compile custom_components/asterisk_pbx/*.py
@@ -140,6 +142,8 @@ jobs:
           assert 'RTP timeout chamada' in html
           assert 'Detetar IP público/LAN' in html
           assert "api('api/ha-state')" in html
+          assert "api('api/security')" in html
+          assert 'Fail2ban' in html
 
           match = re.search(r'<script>(.*)</script>', html, re.S)
           assert match, 'Final HTML has no script block'
@@ -149,6 +153,55 @@ jobs:
 
       - name: Check final JavaScript syntax
         run: node --check /tmp/asterisk-ui-final.js
+
+      - name: Test Fail2ban security policy rendering
+        env:
+          PYTHONPATH: asterisk/rootfs/opt/asterisk-ha
+        run: |
+          python - <<'PY'
+          import ipaddress
+          from pathlib import Path
+          from tempfile import TemporaryDirectory
+          import fail2ban_setup
+          import server
+
+          with TemporaryDirectory() as d:
+              base = Path(d)
+              root = base/'etc-fail2ban'
+              data = base/'data'
+              log = base/'asterisk-full.log'
+              state = fail2ban_setup.render({
+                  'fail2ban_enabled': True,
+                  'fail2ban_bantime': 3600,
+                  'fail2ban_findtime': 600,
+                  'fail2ban_maxretry': 5,
+                  'fail2ban_web_maxretry': 10,
+                  'sip_port': 5060,
+                  'tls_port': 5061,
+                  'fail2ban_ignoreip': '192.168.1.0/24',
+              }, root=root, data_dir=data, asterisk_log=log)
+              jail = (root/'jail.d'/'asterisk-ha.local').read_text()
+              sipfilter = (root/'filter.d'/'asterisk-ha-pjsip.conf').read_text()
+              webfilter = (root/'filter.d'/'asterisk-ha-web.conf').read_text()
+              assert state['enabled'] is True
+              assert 'nftables-multiport' in jail
+              assert 'protocol=udp' in jail and 'protocol=tcp' in jail
+              assert 'bantime.increment = true' in jail
+              assert '192.168.1.0/24' in jail
+              assert "Request 'REGISTER'" in sipfilter
+              assert "Request 'INVITE'" in sipfilter
+              assert 'INVITE.*No matching endpoint' not in sipfilter
+              assert 'PBX-WEB' in webfilter
+              assert str(log) in jail
+
+          private = ipaddress.ip_address('192.168.1.20')
+          public = ipaddress.ip_address('8.8.8.8')
+          assert any(private in n for n in server.TRUSTED_WEB_NETWORKS)
+          assert not any(public in n for n in server.TRUSTED_WEB_NETWORKS)
+          source = Path('asterisk/rootfs/opt/asterisk-ha/server.py').read_text()
+          assert 'Sensitive credentials endpoint disabled' in source
+          assert 'public-direct-blocked' in source
+          PY
 
       - name: Test automatic SIP and RTP NAT policy
         env:
@@ -271,8 +324,11 @@ jobs:
           grep -q 'extensions_ivr_gui.conf' asterisk/rootfs/etc/asterisk-template/extensions.conf
           grep -q 'auth_username' asterisk/rootfs/etc/asterisk-template/pjsip.conf
           grep -q '/api/ha-state' asterisk/rootfs/opt/asterisk-ha/server.py
+          grep -q '/api/security' asterisk/rootfs/opt/asterisk-ha/server.py
+          grep -q 'Sensitive credentials endpoint disabled' asterisk/rootfs/opt/asterisk-ha/server.py
           grep -q '/api/ivr-upload' asterisk/rootfs/opt/asterisk-ha/server.py
           grep -q 'server_entry.py' asterisk/rootfs/usr/local/bin/asterisk-ha-start
+          grep -q 'fail2ban-client -x start' asterisk/rootfs/usr/local/bin/asterisk-ha-start
           grep -q '/share/asterisk-ivr' asterisk/rootfs/usr/local/bin/asterisk-ha-start
           grep -q 'fxs_secret' asterisk/rootfs/opt/asterisk-ha/ht503.py
           grep -q 'module reload res_pjsip.so' asterisk/rootfs/opt/asterisk-ha/server_entry.py
@@ -283,4 +339,6 @@ jobs:
           grep -q 'apply_nat' asterisk/rootfs/opt/asterisk-ha/bootstrap.py
           grep -q 'symmetric_transport=yes' asterisk/rootfs/opt/asterisk-ha/nat.py
           grep -q 'RTP timeout chamada' asterisk/rootfs/opt/asterisk-ha/network.py
+          grep -q 'NET_ADMIN' asterisk/config.yaml
+          grep -q 'fail2ban nftables' asterisk/Dockerfile
           grep -q 'asterisk_pbx' custom_components/asterisk_pbx/manifest.json
