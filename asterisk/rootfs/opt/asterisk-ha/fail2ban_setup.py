@@ -7,7 +7,6 @@ OPTIONS = Path('/data/options.json')
 F2B_DIR = Path('/etc/fail2ban')
 DATA_DIR = Path('/data/fail2ban')
 ASTERISK_LOG = Path('/var/log/asterisk/full')
-WEB_LOG = DATA_DIR / 'pbx-web-security.log'
 
 
 def _load_options(path=OPTIONS):
@@ -39,10 +38,11 @@ def _ignoreip(value):
     return ' '.join(safe)
 
 
-def render(options=None, root=F2B_DIR, data_dir=DATA_DIR):
+def render(options=None, root=F2B_DIR, data_dir=DATA_DIR, asterisk_log=ASTERISK_LOG):
     options = dict(options or _load_options())
     root = Path(root)
     data_dir = Path(data_dir)
+    asterisk_log = Path(asterisk_log)
     data_dir.mkdir(parents=True, exist_ok=True)
     (root / 'jail.d').mkdir(parents=True, exist_ok=True)
     (root / 'filter.d').mkdir(parents=True, exist_ok=True)
@@ -56,7 +56,7 @@ def render(options=None, root=F2B_DIR, data_dir=DATA_DIR):
     tls_port = _bounded(options.get('tls_port'), 5061, 1, 65535)
     ignoreip = _ignoreip(options.get('fail2ban_ignoreip'))
 
-    for path in (Path('/var/log/asterisk/full'), data_dir / 'pbx-web-security.log'):
+    for path in (asterisk_log, data_dir / 'pbx-web-security.log'):
         path.parent.mkdir(parents=True, exist_ok=True)
         path.touch(exist_ok=True)
 
@@ -99,7 +99,7 @@ bantime.rndtime = 300
 [asterisk-pjsip]
 enabled = {'true' if enabled else 'false'}
 filter = asterisk-ha-pjsip
-logpath = /var/log/asterisk/full
+logpath = {asterisk_log}
 findtime = {findtime}
 maxretry = {maxretry}
 bantime = {bantime}
