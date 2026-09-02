@@ -32,7 +32,8 @@ DESCRIPTIONS = (
     AsteriskSensorDescription(key="ivrs_enabled", name="IVRs ativos", icon="mdi:menu-open", value_fn=lambda d: d.get("ivrs_enabled", 0)),
     AsteriskSensorDescription(key="ivr_active_channels", name="Canais em IVR", icon="mdi:account-voice", value_fn=lambda d: d.get("ivr_active_channels", 0)),
     AsteriskSensorDescription(key="sip_trunks_total", name="Trunks SIP", icon="mdi:transit-connection-variant", value_fn=lambda d: d.get("sip_trunks_total", 0)),
-    AsteriskSensorDescription(key="gsm_dongles_total", name="Dongles GSM", icon="mdi:sim", value_fn=lambda d: d.get("gsm_dongles_total", 0)),
+    AsteriskSensorDescription(key="gsm_dongles_total", name="Dongles GSM presentes", icon="mdi:sim", value_fn=lambda d: d.get("gsm_dongles_total", 0)),
+    AsteriskSensorDescription(key="gsm_dongles_configured", name="Dongles GSM configurados", icon="mdi:sim-outline", value_fn=lambda d: d.get("gsm_dongles_configured", 0)),
     AsteriskSensorDescription(key="gsm_dongles_connected", name="Dongles GSM ligados", icon="mdi:signal", value_fn=lambda d: d.get("gsm_dongles_connected", 0)),
     AsteriskSensorDescription(key="ht503_rtt", name="HT503 FXO RTT", icon="mdi:timer-outline", native_unit_of_measurement=UnitOfTime.MILLISECONDS, value_fn=lambda d: (d.get("ht503") or {}).get("rtt_ms")),
     AsteriskSensorDescription(key="ht503_fxs_rtt", name="HT503 FXS RTT", icon="mdi:timer-outline", native_unit_of_measurement=UnitOfTime.MILLISECONDS, value_fn=lambda d: (((d.get("ht503") or {}).get("fxs") or {}).get("rtt_ms"))),
@@ -64,8 +65,14 @@ class AsteriskSensor(AsteriskEntity, SensorEntity):
     @property
     def extra_state_attributes(self):
         data = self.coordinator.data or {}
-        if self.entity_description.key == "gsm_dongles_total":
-            return {"devices": data.get("gsm_dongles", [])}
+        if self.entity_description.key in ("gsm_dongles_total", "gsm_dongles_configured"):
+            return {
+                "devices": data.get("gsm_dongles", []),
+                "configured": data.get("gsm_dongles_configured", 0),
+                "present": data.get("gsm_dongles_total", 0),
+                "absent": data.get("gsm_dongles_absent", 0),
+                "connected": data.get("gsm_dongles_connected", 0),
+            }
         if self.entity_description.key == "extensions_total":
             return {"extensions": data.get("extensions", [])}
         if self.entity_description.key == "ivrs_total":

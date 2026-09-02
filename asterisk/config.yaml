@@ -1,7 +1,7 @@
 name: Asterisk 22 PBX + GSM
-version: "0.2.9"
+version: "0.2.10"
 slug: asterisk22_pbx
-description: "Asterisk 22.11 PBX for Home Assistant with numeric 6000 RTP Echo Test diagnostics, SIPcord RTP keepalive/NAT audio hardening, external SIP/RTP NAT handling, remote audio and hangup recovery, separated live Dashboard status panels, unified ulaw/alaw codecs, HT503 FXS/FXO, Asterisk 22 compatible PJSIP reload, SIPcord/Discord, IVR audio manager, Home Assistant entities, AMI, ARI, Ingress GUI and optional chan_dongle GSM"
+description: "Asterisk 22.11 PBX for Home Assistant with real GSM presence detection, numeric 6000 RTP Echo Test diagnostics, SIPcord RTP keepalive/NAT audio hardening, external SIP/RTP NAT handling, remote audio and hangup recovery, separated live Dashboard status panels, unified ulaw/alaw codecs, HT503 FXS/FXO, Asterisk 22 compatible PJSIP reload, SIPcord/Discord, IVR audio manager, Home Assistant entities, AMI, ARI, Ingress GUI and optional chan_dongle GSM"
 arch:
   - amd64
   - aarch64
