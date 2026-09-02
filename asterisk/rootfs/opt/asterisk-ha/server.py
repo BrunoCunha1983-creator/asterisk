@@ -1,6 +1,9 @@
 #!/usr/bin/env python3
+from datetime import datetime, timezone
 from http.server import ThreadingHTTPServer, BaseHTTPRequestHandler
+from pathlib import Path
 from urllib.parse import urlparse, parse_qs
+import ipaddress
 import json, re
 
 from backend import CONF, PBX, SEC, ast, load_json, save_json, token, render_managed, run, usb_ports
@@ -9,8 +12,14 @@ from sipcord import ensure_sipcord_state, render_sipcord, augment_index as augme
 from ivr import ensure_ivr_state, validate_ivrs, render_ivrs, augment_index as augment_ivr_index, recording_code, recording_sound_id
 from ivr_audio import list_recordings, save_upload, get_recording, delete_recording, sound_to_stem
 from ha_state import build_snapshot
+from security_status import fail2ban_status
 
 INDEX = augment_ivr_index(augment_sipcord_index(INDEX))
+WEB_SECURITY_LOG = Path('/data/fail2ban/pbx-web-security.log')
+TRUSTED_WEB_NETWORKS = tuple(ipaddress.ip_network(x) for x in (
+    '127.0.0.0/8', '::1/128', '10.0.0.0/8', '172.16.0.0/12',
+    '192.168.0.0/16', '100.64.0.0/10', 'fc00::/7', 'fe80::/10',
+))
 
 
 def normalize_ht503_legacy_trunks(data):
@@ -103,8 +112,44 @@ def _asterisk_prompt(prompt, ivr):
     return f'/share/asterisk-ivr/{sound_to_stem(recording_sound_id(ivr), "ivr-prompt")}'
 
 
+def _safe_log_token(value, default='-'):
+    value = re.sub(r'\s+', '_', str(value or default))
+    return re.sub(r'[^0-9A-Za-z_./?&=%:+*~-]', '_', value)[:500] or default
+
+
 class H(BaseHTTPRequestHandler):
     def log_message(self,*a): pass
+
+    def _peer_ip(self):
+        return str((self.client_address or ('', 0))[0] or '')
+
+    def _trusted_web_peer(self):
+        try:
+            ip = ipaddress.ip_address(self._peer_ip())
+            return any(ip in net for net in TRUSTED_WEB_NETWORKS)
+        except Exception:
+            return False
+
+    def _audit(self, status, reason):
+        try:
+            WEB_SECURITY_LOG.parent.mkdir(parents=True, exist_ok=True)
+            stamp = datetime.now(timezone.utc).isoformat(timespec='seconds').replace('+00:00','Z')
+            path = urlparse(self.path).path or '/'
+            line = f'{stamp} PBX-WEB client={_safe_log_token(self._peer_ip())} method={_safe_log_token(self.command)} path={_safe_log_token(path)} status={int(status)} reason={_safe_log_token(reason)}\n'
+            with WEB_SECURITY_LOG.open('a') as f:
+                f.write(line)
+        except Exception:
+            pass
+
+    def _guard_web(self):
+        # The WebGUI has no independent login screen; authentication is supplied
+        # by Home Assistant Ingress. Direct public access must therefore never
+        # be treated as an authenticated UI path.
+        if self._trusted_web_peer():
+            return True
+        self._audit(403, 'public-direct-blocked')
+        self.sendj({'error':'Direct public WebGUI access is disabled; use Home Assistant Ingress'},403)
+        return False
 
     def sendj(self,obj,code=200):
         b=json.dumps(obj,ensure_ascii=False).encode()
@@ -135,12 +180,14 @@ class H(BaseHTTPRequestHandler):
             return {}
 
     def do_GET(self):
+        if not self._guard_web(): return
         u=urlparse(self.path); path=u.path.rstrip('/') or '/'; q=parse_qs(u.query)
         if path=='/':
             b=INDEX.encode(); self.send_response(200); self.send_header('Content-Type','text/html; charset=utf-8'); self.send_header('Content-Length',len(b)); self.end_headers(); self.wfile.write(b); return
         if path=='/api/status':
             v=ast('core show version'); ch=ast('core show channels count'); m=re.search(r'(\d+) active channel',ch['output'])
             self.sendj({'running':v['ok'],'version':v['output'].strip(),'channels':int(m.group(1)) if m else 0}); return
+        if path=='/api/security': self.sendj(fail2ban_status()); return
         if path=='/api/ha-state':
             try:
                 self.sendj(build_snapshot(ast, load_pbx_state()))
@@ -175,17 +222,21 @@ class H(BaseHTTPRequestHandler):
         if path=='/api/files': self.sendj({'files':sorted([p.name for p in CONF.glob('*.conf')])}); return
         if path=='/api/file':
             n=(q.get('name') or [''])[0]
-            if not re.fullmatch(r'[A-Za-z0-9_.-]+\.conf',n) or not (CONF/n).exists(): self.sendj({'error':'invalid file'},404); return
+            if not re.fullmatch(r'[A-Za-z0-9_.-]+\.conf',n) or not (CONF/n).exists():
+                self._audit(404,'invalid-config-file'); self.sendj({'error':'invalid file'},404); return
             self.sendj({'name':n,'content':(CONF/n).read_text(errors='ignore')}); return
         if path=='/api/logs': self.sendj(run('tail -n 600 /var/log/asterisk/full 2>/dev/null || tail -n 600 /var/log/asterisk/messages 2>/dev/null')); return
         if path=='/api/diagnostics': self.sendj({'modules':ast('module show like res_ari')['output']+'\n'+ast('module show like chan_dongle')['output'],'pjsip':ast('pjsip show transports')['output']+'\n'+ast('pjsip show contacts')['output'],'dongle':ast('dongle show devices')['output'],'usb':run('lsusb; echo; ls -l /dev/ttyUSB* /dev/ttyACM* 2>/dev/null')['output']}); return
-        if path=='/api/credentials': self.sendj(load_json(SEC,{})); return
-        self.sendj({'error':'not found'},404)
+        if path=='/api/credentials':
+            self._audit(403,'sensitive-endpoint-disabled')
+            self.sendj({'error':'Sensitive credentials endpoint disabled'},403); return
+        self._audit(404,'not-found'); self.sendj({'error':'not found'},404)
 
     def do_POST(self):
+        if not self._guard_web(): return
         u=urlparse(self.path); data=self.body(); path=u.path.rstrip('/')
         if data.get('_error'):
-            self.sendj({'ok':False,'error':'request too large'},413); return
+            self._audit(413,'request-too-large'); self.sendj({'ok':False,'error':'request too large'},413); return
         if path=='/api/pbx':
             try:
                 if not isinstance(data,dict): raise ValueError('object required')
@@ -214,7 +265,8 @@ class H(BaseHTTPRequestHandler):
             action=data.get('action','')
             if action=='cli':
                 c=str(data.get('command','')); allowed=('core reload','pjsip reload','module reload chan_dongle.so','dialplan reload','voicemail reload','queue reload all')
-                if c not in allowed: self.sendj({'ok':False,'output':'Command not allowed'},403); return
+                if c not in allowed:
+                    self._audit(403,'cli-command-blocked'); self.sendj({'ok':False,'output':'Command not allowed'},403); return
                 self.sendj(ast(c)); return
             if action in ('ivr_record','ivr_test'):
                 pbx=load_pbx_state()
@@ -243,13 +295,15 @@ class H(BaseHTTPRequestHandler):
                     self.sendj(ast(f'dongle sms {dev} {num} {msg}')); return
                 code=re.sub(r'[^0-9*#+]','',str(data.get('code',''))); self.sendj(ast(f'dongle ussd {dev} {code}')); return
             self.sendj({'ok':False,'output':'Unknown action'},400); return
-        self.sendj({'error':'not found'},404)
+        self._audit(404,'not-found'); self.sendj({'error':'not found'},404)
 
     def do_PUT(self):
+        if not self._guard_web(): return
         u=urlparse(self.path); q=parse_qs(u.query); data=self.body()
         if u.path.rstrip('/')=='/api/file':
             n=(q.get('name') or [''])[0]
-            if not re.fullmatch(r'[A-Za-z0-9_.-]+\.conf',n) or not (CONF/n).exists(): self.sendj({'ok':False,'error':'invalid file'},400); return
+            if not re.fullmatch(r'[A-Za-z0-9_.-]+\.conf',n) or not (CONF/n).exists():
+                self._audit(404,'invalid-config-file'); self.sendj({'ok':False,'error':'invalid file'},400); return
             try:
                 (CONF/n).write_text(str(data.get('content','')))
                 if n.startswith('pjsip'): out=ast('pjsip reload')
@@ -261,10 +315,17 @@ class H(BaseHTTPRequestHandler):
                 self.sendj({'ok':True,'reload':out['output']})
             except Exception as e: self.sendj({'ok':False,'error':str(e)},500)
             return
-        self.sendj({'error':'not found'},404)
+        self._audit(404,'not-found'); self.sendj({'error':'not found'},404)
+
+    def do_DELETE(self):
+        if not self._guard_web(): return
+        self._audit(405,'method-not-allowed')
+        self.sendj({'error':'method not allowed'},405)
 
 
 if __name__=='__main__':
+    WEB_SECURITY_LOG.parent.mkdir(parents=True, exist_ok=True)
+    WEB_SECURITY_LOG.touch(exist_ok=True)
     startup=load_pbx_state()
     render_managed(startup)
     render_sipcord(CONF,startup)
