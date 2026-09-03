@@ -8,6 +8,7 @@ from ht503 import augment_index as augment_ht503_index, ensure_ht503_state, vali
 from dashboard_status import augment_index as augment_dashboard_index
 from gsm_ui import augment_index as augment_gsm_index
 from security_ui import augment_index as augment_security_index
+from gsm_runtime import normalize_gsm_state
 from network import (
     DEFAULT_NETWORK,
     augment_index as augment_network_index,
@@ -37,12 +38,13 @@ _current_network = dict(DEFAULT_NETWORK)
 
 
 def normalize_pbx(data):
-    """Extend PBX normalization with HT503 and network/NAT state."""
+    """Extend PBX normalization with HT503, network/NAT and real GSM state."""
     data, changed, removed = _base_normalize_pbx(data)
     data, ht_changed = ensure_ht503_state(data)
     validate_ht503_state(data)
     data, net_changed = ensure_network_state(data)
-    return data, bool(changed or ht_changed or net_changed), removed
+    data, gsm_changed = normalize_gsm_state(data)
+    return data, bool(changed or ht_changed or net_changed or gsm_changed), removed
 
 
 def _reload_failed(result):
