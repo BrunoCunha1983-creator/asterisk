@@ -35,10 +35,10 @@ done
 
 python3 "$APP/bootstrap.py"
 
-# Fail2ban is deliberately non-fatal for PBX availability. Run the server in
-# foreground mode as a supervised child process instead of relying on daemon
-# startup inside the Home Assistant container. Use one explicit socket path for
-# the server, status API and shutdown, and wait until the server answers ping.
+# Fail2ban is deliberately non-fatal for PBX availability. Use fail2ban-client
+# to start BOTH server and jails, but request foreground mode so the process is
+# stable inside this container without systemd. One explicit socket path is
+# shared by startup, status API and shutdown.
 F2B_STARTED=0
 F2B_PID=""
 F2B_ENABLED="$(python3 - <<'PY'
@@ -54,7 +54,7 @@ if [ "$F2B_ENABLED" = "1" ]; then
   : > /data/fail2ban/server.log
   if python3 "$APP/fail2ban_setup.py" >/data/fail2ban/generated.json 2>/data/fail2ban/setup-error.log \
      && fail2ban-client -s "$F2B_SOCKET" -p "$F2B_PIDFILE" -t >/data/fail2ban/config-test.log 2>&1; then
-    fail2ban-server -f -x -s "$F2B_SOCKET" -p "$F2B_PIDFILE" >>/data/fail2ban/server.log 2>&1 &
+    fail2ban-client -f -x -s "$F2B_SOCKET" -p "$F2B_PIDFILE" start >>/data/fail2ban/server.log 2>&1 &
     F2B_PID=$!
     i=0
     while [ "$i" -lt 40 ]; do
