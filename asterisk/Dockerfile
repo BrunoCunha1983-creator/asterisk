@@ -85,7 +85,10 @@ RUN set -eu; \
     missing="$( { ldd /usr/sbin/asterisk; find /usr/lib/asterisk/modules -type f -name '*.so' -exec ldd {} \; ; } 2>/dev/null | grep 'not found' || true )"; \
     if [ -n "$missing" ]; then echo "Unresolved runtime libraries:"; echo "$missing"; exit 1; fi; \
     /usr/sbin/asterisk -V; \
-    fail2ban-client -V
+    fail2ban-client -V; \
+    python3 /opt/asterisk-ha/fail2ban_setup.py >/tmp/fail2ban-generated.json; \
+    fail2ban-client -t; \
+    rm -f /tmp/fail2ban-generated.json /data/fail2ban/fail2ban.sqlite3
 
 EXPOSE 8099/tcp 5038/tcp 8088/tcp 5060/udp 5061/tcp 4569/udp
 ENTRYPOINT ["/usr/local/bin/asterisk-ha-start"]

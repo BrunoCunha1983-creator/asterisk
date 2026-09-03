@@ -62,11 +62,19 @@ def render(options=None, root=F2B_DIR, data_dir=DATA_DIR, asterisk_log=ASTERISK_
 
     (root / 'fail2ban.local').write_text(
         '[Definition]\n'
+        'allowipv6 = auto\n'
         f'logtarget = {data_dir}/fail2ban.log\n'
         f'dbfile = {data_dir}/fail2ban.sqlite3\n'
         'dbpurgeage = 1209600\n'
         'loglevel = INFO\n'
     )
+
+    # Debian enables the stock sshd jail in jail.d/defaults-debian.conf. This
+    # PBX image has no sshd/auth.log, so that unrelated jail makes `fail2ban-client
+    # -t` fail before our Asterisk jails can start. A late-sorting local override
+    # disables only the distro sshd jail while leaving our PBX jails untouched.
+    stock_override = root / 'jail.d' / 'zz-asterisk-ha-disable-stock.local'
+    stock_override.write_text('[sshd]\nenabled = false\n')
 
     (root / 'filter.d' / 'asterisk-ha-pjsip.conf').write_text(r'''[Definition]
 # Conservative PJSIP filter: REGISTER authentication failures are banned.
@@ -115,7 +123,8 @@ maxretry = {web_maxretry}
 bantime = {bantime}
 action = nftables-multiport[name=asterisk-web, port="8099", protocol=tcp]
 '''
-    (root / 'jail.d' / 'asterisk-ha.local').write_text(jail)
+    jail_file = root / 'jail.d' / 'asterisk-ha.local'
+    jail_file.write_text(jail)
     return {
         'enabled': enabled,
         'bantime': bantime,
@@ -125,7 +134,8 @@ action = nftables-multiport[name=asterisk-web, port="8099", protocol=tcp]
         'ignoreip': ignoreip,
         'sip_port': sip_port,
         'tls_port': tls_port,
-        'jail_file': str(root / 'jail.d' / 'asterisk-ha.local'),
+        'jail_file': str(jail_file),
+        'stock_override': str(stock_override),
     }
 
 

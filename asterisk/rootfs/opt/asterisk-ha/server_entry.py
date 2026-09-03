@@ -61,9 +61,38 @@ def _reload_failed(result):
     return not bool((result or {}).get('ok')) or any(marker in output for marker in markers)
 
 
+def _dongle_cli_invalid(result):
+    output = str((result or {}).get('output', '') or '').lower()
+    markers = (
+        'no such command',
+        'no such module',
+        'command not found',
+        'unable to find command',
+        'chan_dongle is not loaded',
+    )
+    return not bool((result or {}).get('ok')) or any(marker in output for marker in markers)
+
+
 def ast_compat(command):
-    """Translate the legacy GUI PJSIP reload action to Asterisk 22 syntax."""
-    if str(command).strip() != 'pjsip reload':
+    """Provide Asterisk 22 CLI compatibility and safe GSM runtime reporting."""
+    command = str(command).strip()
+
+    # `dongle show devices` can itself return an Asterisk CLI error with exit
+    # status 0 when chan_dongle is not loaded. The old parser interpreted
+    # "No such command ..." as a connected modem called "No". Also, with no
+    # ttyUSB/ttyACM nodes there cannot be a real chan_dongle modem. Return the
+    # canonical empty-device text in both cases so Dashboard/HA stay at zero.
+    if command == 'dongle show devices':
+        result = _base_ast(command)
+        try:
+            serial_ports = backend.usb_ports()
+        except Exception:
+            serial_ports = []
+        if not serial_ports or _dongle_cli_invalid(result):
+            return {'ok': True, 'code': 0, 'output': 'No devices found'}
+        return result
+
+    if command != 'pjsip reload':
         return _base_ast(command)
 
     primary_command = 'module reload res_pjsip.so'
