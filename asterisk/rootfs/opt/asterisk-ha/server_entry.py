@@ -6,6 +6,8 @@ import backend
 import server
 from ht503 import augment_index as augment_ht503_index, ensure_ht503_state, validate_ht503_state
 from dashboard_status import augment_index as augment_dashboard_index
+from gsm_ui import augment_index as augment_gsm_index
+from security_ui import augment_index as augment_security_index
 from network import (
     DEFAULT_NETWORK,
     augment_index as augment_network_index,
@@ -17,7 +19,15 @@ from network import (
 
 
 # Apply feature UI layers over the base SIPcord + IVR page.
-server.INDEX = augment_network_index(augment_dashboard_index(augment_ht503_index(server.INDEX)))
+server.INDEX = augment_security_index(
+    augment_gsm_index(
+        augment_network_index(
+            augment_dashboard_index(
+                augment_ht503_index(server.INDEX)
+            )
+        )
+    )
+)
 
 _base_normalize_pbx = server.normalize_pbx
 _base_ast = server.ast
@@ -135,6 +145,8 @@ class H(server.H):
     def do_GET(self):
         path = urlparse(self.path).path.rstrip('/') or '/'
         if path == '/api/network-detect':
+            if not self._guard_web():
+                return
             self.sendj({
                 'external_address': detect_public_address(),
                 'local_nets': detect_local_networks(),
