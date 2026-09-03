@@ -55,7 +55,10 @@ async function dashboard(a){
     <div class=card><div class=sub>Canais ativos</div><div class=big>${h.active_channels||0}</div><div class=sub>Chamadas ativas: ${h.active_calls||0}</div></div>
     <div class=card><div class=sub>Extensões</div><div class=big>${h.extensions_registered||0}/${h.extensions_total||0}</div><div class=sub>Reachable / configuradas</div></div>
     <div class=card><div class=sub>IVR</div><div class=big>${h.ivrs_enabled||0}</div><div class=sub>Canais em IVR: ${h.ivr_active_channels||0}</div></div>
-    <div class=card><div class=sub>Dongles GSM</div><div class=big>${h.gsm_dongles_connected||0}/${h.gsm_dongles_total||0}</div><div class=sub>Ligados / presentes · configurados: ${h.gsm_dongles_configured||0}</div></div>
+    <div class=card><div class=sub>GSM configurados</div><div class=big>${h.gsm_dongles_configured||0}</div><div class=sub>Configuração guardada</div></div>
+    <div class=card><div class=sub>GSM presentes</div><div class=big>${h.gsm_dongles_total||0}</div><div class=sub>Hardware com portas /dev reais</div></div>
+    <div class=card><div class=sub>GSM ausentes</div><div class=big>${h.gsm_dongles_absent||0}</div><div class=sub>Configurados sem hardware</div></div>
+    <div class=card><div class=sub>GSM ligados</div><div class=big>${h.gsm_dongles_connected||0}</div><div class=sub>Ativos no chan_dongle</div></div>
     <div class=card><div class=sub>Segurança</div><div class="big ${sec.running?'ok':'bad'}">${sec.running?'PROTEGIDO':'OFFLINE'}</div><div class=sub>Bans ativos: ${sec.currently_banned||0}</div></div>
   </div>
   <div class="card status-section"><h2>Extensões PJSIP</h2><div class=status-summary><span class=pill>Reachable: ${h.extensions_registered||0}</span><span class=pill>Offline: ${h.extensions_unregistered||0}</span><span class=pill>Total: ${h.extensions_total||0}</span></div><div class=status-grid>${extCards}</div></div>
