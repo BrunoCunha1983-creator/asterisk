@@ -39,6 +39,8 @@ python3 "$APP/bootstrap.py"
 # to start BOTH server and jails, but request foreground mode so the process is
 # stable inside this container without systemd. One explicit socket path is
 # shared by startup, status API and shutdown.
+# Legacy mode `fail2ban-client -x start` is intentionally replaced by the
+# foreground/supervised invocation below.
 F2B_STARTED=0
 F2B_PID=""
 F2B_ENABLED="$(python3 - <<'PY'
