@@ -1,7 +1,11 @@
 #!/usr/bin/env python3
+from pathlib import Path
 import re
 import shutil
 import subprocess
+
+SOCKET = '/run/fail2ban/fail2ban.sock'
+DATA_DIR = Path('/data/fail2ban')
 
 
 def _run(args, timeout=4):
@@ -17,13 +21,36 @@ def _number(pattern, text, default=0):
     return int(m.group(1)) if m else default
 
 
+def _tail(path, limit=5000):
+    try:
+        text = Path(path).read_text(errors='ignore')
+        return text[-limit:]
+    except Exception:
+        return ''
+
+
 def fail2ban_status():
     if not shutil.which('fail2ban-client'):
         return {'installed': False, 'running': False, 'jails': [], 'currently_banned': 0, 'total_banned': 0, 'banned_ips': []}
 
-    ok, text = _run(['fail2ban-client', 'status'])
+    ok, text = _run(['fail2ban-client', '-s', SOCKET, 'status'])
     if not ok:
-        return {'installed': True, 'running': False, 'error': text.strip(), 'jails': [], 'currently_banned': 0, 'total_banned': 0, 'banned_ips': []}
+        diagnostics = '\n'.join(x for x in (
+            _tail(DATA_DIR / 'server.log'),
+            _tail(DATA_DIR / 'config-test.log'),
+            _tail(DATA_DIR / 'setup-error.log'),
+        ) if x).strip()
+        return {
+            'installed': True,
+            'running': False,
+            'socket': SOCKET,
+            'error': text.strip(),
+            'startup_diagnostics': diagnostics[-8000:],
+            'jails': [],
+            'currently_banned': 0,
+            'total_banned': 0,
+            'banned_ips': [],
+        }
 
     m = re.search(r'Jail list:\s*(.*)$', text, re.I | re.M)
     jails = [x.strip() for x in (m.group(1).split(',') if m else []) if x.strip()]
@@ -32,7 +59,7 @@ def fail2ban_status():
     banned_ips = []
     details = {}
     for jail in jails:
-        good, out = _run(['fail2ban-client', 'status', jail])
+        good, out = _run(['fail2ban-client', '-s', SOCKET, 'status', jail])
         if not good:
             details[jail] = {'running': False, 'error': out.strip()}
             continue
@@ -48,6 +75,7 @@ def fail2ban_status():
     return {
         'installed': True,
         'running': True,
+        'socket': SOCKET,
         'jails': jails,
         'currently_banned': current,
         'total_banned': total,

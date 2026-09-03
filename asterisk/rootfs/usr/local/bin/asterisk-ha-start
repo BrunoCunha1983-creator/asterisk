@@ -3,6 +3,8 @@ set -eu
 APP=/opt/asterisk-ha
 CONF=/config/asterisk
 IVR_AUDIO=/share/asterisk-ivr
+F2B_SOCKET=/run/fail2ban/fail2ban.sock
+F2B_PIDFILE=/run/fail2ban/fail2ban.pid
 mkdir -p "$CONF" /config/state /share/asterisk-recordings "$IVR_AUDIO" /var/log/asterisk /var/spool/asterisk /var/run/asterisk /run/fail2ban /data/fail2ban
 
 # Make custom Asterisk sounds persistent. Preserve any image-provided custom
@@ -33,10 +35,14 @@ done
 
 python3 "$APP/bootstrap.py"
 
-# Fail2ban is deliberately non-fatal for PBX availability. If firewall setup
-# is unavailable, Asterisk still starts and the Dashboard reports protection
-# as offline instead of taking working telephony down.
+# Fail2ban is deliberately non-fatal for PBX availability. Use fail2ban-client
+# to start BOTH server and jails, but request foreground mode so the process is
+# stable inside this container without systemd. One explicit socket path is
+# shared by startup, status API and shutdown.
+# Legacy mode `fail2ban-client -x start` is intentionally replaced by the
+# foreground/supervised invocation below.
 F2B_STARTED=0
+F2B_PID=""
 F2B_ENABLED="$(python3 - <<'PY'
 import json
 try:
@@ -46,13 +52,35 @@ except Exception:
 PY
 )"
 if [ "$F2B_ENABLED" = "1" ]; then
+  rm -f "$F2B_SOCKET" "$F2B_PIDFILE"
+  : > /data/fail2ban/server.log
   if python3 "$APP/fail2ban_setup.py" >/data/fail2ban/generated.json 2>/data/fail2ban/setup-error.log \
-     && fail2ban-client -t >/data/fail2ban/config-test.log 2>&1 \
-     && fail2ban-client -x start >>/data/fail2ban/config-test.log 2>&1; then
-    F2B_STARTED=1
+     && fail2ban-client -s "$F2B_SOCKET" -p "$F2B_PIDFILE" -t >/data/fail2ban/config-test.log 2>&1; then
+    fail2ban-client -f -x -s "$F2B_SOCKET" -p "$F2B_PIDFILE" start >>/data/fail2ban/server.log 2>&1 &
+    F2B_PID=$!
+    i=0
+    while [ "$i" -lt 40 ]; do
+      if fail2ban-client -s "$F2B_SOCKET" ping >/data/fail2ban/ping.log 2>&1; then
+        F2B_STARTED=1
+        break
+      fi
+      if ! kill -0 "$F2B_PID" 2>/dev/null; then
+        break
+      fi
+      i=$((i+1))
+      sleep 0.25
+    done
+  fi
+
+  if [ "$F2B_STARTED" = "1" ]; then
     echo "[SECURITY] Fail2ban ativo: asterisk-pjsip + asterisk-web"
   else
-    echo "[SECURITY] AVISO: Fail2ban não arrancou; PBX continua disponível. Ver /data/fail2ban/*.log"
+    echo "[SECURITY] AVISO: Fail2ban não arrancou; PBX continua disponível."
+    echo "[SECURITY] Ver /data/fail2ban/config-test.log e /data/fail2ban/server.log"
+    if [ -n "$F2B_PID" ] && kill -0 "$F2B_PID" 2>/dev/null; then
+      kill "$F2B_PID" 2>/dev/null || true
+    fi
+    F2B_PID=""
   fi
 else
   echo "[SECURITY] Fail2ban desativado nas opções do add-on"
@@ -77,7 +105,10 @@ asterisk -f -C "$CONF/asterisk.conf" -U root -G root $VFLAGS &
 AST_PID=$!
 cleanup() {
   kill "$AST_PID" "$UI_PID" 2>/dev/null || true
-  if [ "$F2B_STARTED" = "1" ]; then fail2ban-client stop >/dev/null 2>&1 || true; fi
+  if [ "$F2B_STARTED" = "1" ]; then
+    fail2ban-client -s "$F2B_SOCKET" stop >/dev/null 2>&1 || true
+  fi
+  if [ -n "$F2B_PID" ]; then kill "$F2B_PID" 2>/dev/null || true; fi
 }
 trap cleanup INT TERM EXIT
 wait "$AST_PID"
