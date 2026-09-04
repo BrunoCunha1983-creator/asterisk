@@ -1,7 +1,7 @@
 name: Asterisk 22 PBX + GSM
-version: "0.2.14"
+version: "0.2.15"
 slug: asterisk22_pbx
-description: "Asterisk 22.11 PBX for Home Assistant with validated Fail2ban SIP/Web protection, stock sshd jail disabled, real GSM runtime detection, dedicated Security diagnostics, GSM saved-profile separation from real hardware, numeric 6000 RTP Echo Test diagnostics, SIPcord RTP keepalive/NAT audio hardening, external SIP/RTP NAT handling, remote audio and hangup recovery, separated live Dashboard status panels, unified ulaw/alaw codecs, HT503 FXS/FXO, Asterisk 22 compatible PJSIP reload, SIPcord/Discord, IVR audio manager, Home Assistant entities, AMI, ARI, Ingress GUI and optional chan_dongle GSM"
+description: "Asterisk 22.11 PBX for Home Assistant with Lovelace WebRTC/WS/WSS softphone support, validated Fail2ban SIP/Web protection, stock sshd jail disabled, real GSM runtime detection, dedicated Security diagnostics, GSM saved-profile separation from real hardware, numeric 6000 RTP Echo Test diagnostics, SIPcord RTP keepalive/NAT audio hardening, external SIP/RTP NAT handling, remote audio and hangup recovery, separated live Dashboard status panels, unified ulaw/alaw codecs, HT503 FXS/FXO, Asterisk 22 compatible PJSIP reload, SIPcord/Discord, IVR audio manager, Home Assistant entities, AMI, ARI, Ingress GUI and optional chan_dongle GSM"
 arch:
   - amd64
   - aarch64
@@ -26,12 +26,15 @@ map:
     read_only: false
   - type: share
     read_only: false
+  - type: ssl
+    read_only: true
 options:
   timezone: Europe/Lisbon
   sip_port: 5060
   tls_port: 5061
   ami_port: 5038
   ari_port: 8088
+  webrtc_wss_port: 8089
   rtp_start: 10000
   rtp_end: 20000
   nat_auto: true
@@ -51,6 +54,7 @@ schema:
   tls_port: port
   ami_port: port
   ari_port: port
+  webrtc_wss_port: port
   rtp_start: int(1024,65535)
   rtp_end: int(1024,65535)
   nat_auto: bool
