@@ -3,6 +3,7 @@ import json, os, re, secrets
 from pathlib import Path
 
 from nat import apply_nat
+from webrtc_runtime import apply_webrtc_runtime
 
 CONF=Path('/config/asterisk'); STATE=Path('/config/state'); OPT=Path('/data/options.json')
 STATE.mkdir(parents=True, exist_ok=True)
@@ -27,6 +28,20 @@ for p in CONF.glob('*.conf'):
     text=p.read_text(errors='ignore'); old=text
     for k,v in repls.items(): text=text.replace(k,v)
     if text!=old: p.write_text(text)
+
+# Browser softphones need Asterisk HTTP WebSocket plus PJSIP WS/WSS transports.
+# Existing installs keep /config/asterisk, so this is a runtime migration and
+# not only a template change. WSS is enabled automatically when HA SSL files
+# are available at /ssl/fullchain.pem and /ssl/privkey.pem.
+try:
+    rtc=apply_webrtc_runtime(CONF, options)
+    print('[WebRTC] WS=%s WSS=%s%s' % (
+        rtc.get('ws_port',8088),
+        'enabled:' if rtc.get('wss') else 'disabled',
+        rtc.get('wss_port',8089) if rtc.get('wss') else '',
+    ))
+except Exception as e:
+    print(f'[WebRTC] unable to apply WebSocket settings: {e}')
 
 # Keep a numeric Echo Test in the persistent dialplan. The add-on seeds
 # extensions.conf only on first install, so upgrades must migrate existing
@@ -107,7 +122,7 @@ def default_ht503():
 
 if not pbx.exists():
     data={
-      'extensions':[{'extension':'100','callerid':'Home Assistant 100','secret':secrets.token_urlsafe(12),'voicemail_pin':'1234','context':'from-internal'}],
+      'extensions':[{'extension':'100','callerid':'Home Assistant 100','secret':secrets.token_urlsafe(12),'voicemail_pin':'1234','context':'from-internal','webrtc':False}],
       'ht503':default_ht503(),
       'sip_trunks':[],
       'gsm_dongles':[],

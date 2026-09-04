@@ -9,6 +9,7 @@ from dashboard_status import augment_index as augment_dashboard_index
 from gsm_ui import augment_index as augment_gsm_index
 from security_ui import augment_index as augment_security_index
 from gsm_runtime import normalize_gsm_state
+from webrtc import augment_index as augment_webrtc_index, ensure_webrtc_state
 from network import (
     DEFAULT_NETWORK,
     augment_index as augment_network_index,
@@ -24,7 +25,9 @@ server.INDEX = augment_security_index(
     augment_gsm_index(
         augment_network_index(
             augment_dashboard_index(
-                augment_ht503_index(server.INDEX)
+                augment_webrtc_index(
+                    augment_ht503_index(server.INDEX)
+                )
             )
         )
     )
@@ -35,16 +38,18 @@ _base_ast = server.ast
 _base_render_managed = server.render_managed
 _base_endpoint_lines = backend.endpoint_lines
 _current_network = dict(DEFAULT_NETWORK)
+_webrtc_extensions = set()
 
 
 def normalize_pbx(data):
-    """Extend PBX normalization with HT503, network/NAT and real GSM state."""
+    """Extend PBX normalization with HT503, WebRTC, network/NAT and real GSM state."""
     data, changed, removed = _base_normalize_pbx(data)
     data, ht_changed = ensure_ht503_state(data)
     validate_ht503_state(data)
+    data, webrtc_changed = ensure_webrtc_state(data)
     data, net_changed = ensure_network_state(data)
     data, gsm_changed = normalize_gsm_state(data)
-    return data, bool(changed or ht_changed or net_changed or gsm_changed), removed
+    return data, bool(changed or ht_changed or webrtc_changed or net_changed or gsm_changed), removed
 
 
 def _reload_failed(result):
@@ -117,19 +122,27 @@ def ast_compat(command):
 
 
 def endpoint_lines_compat(*args, **kwargs):
-    """Apply the GUI-configurable RTP liveness/session policy exactly once."""
+    """Apply RTP/session policy and WebRTC media settings exactly once."""
     lines = list(_base_endpoint_lines(*args, **kwargs))
     num = str(args[0] if args else kwargs.get('num', '') or '')
     media = _current_network or DEFAULT_NETWORK
+    is_webrtc = num in _webrtc_extensions
 
     managed_prefixes = (
         'rtp_keepalive=', 'rtp_timeout=', 'rtp_timeout_hold=',
-        'timers=', 'timers_min_se=', 'timers_sess_expires='
+        'timers=', 'timers_min_se=', 'timers_sess_expires=',
+        'webrtc=', 'dtls_auto_generate_cert=', 'ice_support=',
+        'media_use_received_transport='
     )
-    lines = [
-        line for line in lines
-        if not any(str(line).strip().lower().startswith(prefix) for prefix in managed_prefixes)
-    ]
+    filtered = []
+    for line in lines:
+        stripped = str(line).strip().lower()
+        if any(stripped.startswith(prefix) for prefix in managed_prefixes):
+            continue
+        if is_webrtc and stripped == 'transport=transport-udp':
+            continue
+        filtered.append(line)
+    lines = filtered
 
     keepalive = int(media.get('rtp_keepalive', 15) or 0)
     timeout = int(media.get('rtp_timeout', 30) or 0)
@@ -143,6 +156,13 @@ def endpoint_lines_compat(*args, **kwargs):
     ]
     if timers:
         additions += ['timers_min_se=90', 'timers_sess_expires=180']
+    if is_webrtc:
+        additions += [
+            'webrtc=yes',
+            'dtls_auto_generate_cert=yes',
+            'ice_support=yes',
+            'media_use_received_transport=yes',
+        ]
 
     marker = f'\n[{num}]'
     insert_at = None
@@ -156,10 +176,16 @@ def endpoint_lines_compat(*args, **kwargs):
 
 
 def render_managed_compat(data):
-    """Render endpoint media policy and transport NAT addresses together."""
-    global _current_network
+    """Render endpoint media policy, WebRTC state and transport NAT addresses together."""
+    global _current_network, _webrtc_extensions
     data, _ = ensure_network_state(data)
+    data, _ = ensure_webrtc_state(data)
     _current_network = dict(data.get('network') or DEFAULT_NETWORK)
+    _webrtc_extensions = {
+        str(e.get('extension') or '').strip()
+        for e in (data.get('extensions') or [])
+        if isinstance(e, dict) and e.get('webrtc') and str(e.get('extension') or '').strip()
+    }
     render_transport_nat(server.CONF, data)
     return _base_render_managed(data)
 
