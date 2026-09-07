@@ -11,6 +11,10 @@ STATE = Path('/config/state/wakeup.json')
 OPTIONS = Path('/data/options.json')
 CONF = '/config/asterisk/asterisk.conf'
 HEARTBEAT = Path('/run/asterisk-wakeup-heartbeat')
+SOUNDS = Path('/var/lib/asterisk/sounds')
+DEFAULT_WAKEUP_SOUND = 'pt_BR/this-is-yr-wakeup-call'
+CLASSIC_WAKEUP_SOUND = 'this-is-yr-wakeup-call'
+SOUND_EXTENSIONS = ('.wav', '.WAV', '.gsm', '.ulaw', '.alaw', '.g722', '.sln', '.sln16')
 
 
 def _read_json(path, default):
@@ -48,10 +52,31 @@ def _date(value):
 
 
 def _sound(value):
-    raw = str(value or 'beep').strip() or 'beep'
+    raw = str(value or DEFAULT_WAKEUP_SOUND).strip() or DEFAULT_WAKEUP_SOUND
     if not re.fullmatch(r'[0-9A-Za-z_./-]+', raw):
         raise ValueError('som inválido')
     return raw[:160]
+
+
+def _sound_exists(sound):
+    sound = _sound(sound)
+    base = SOUNDS / sound
+    if base.is_file():
+        return True
+    return any(Path(str(base) + ext).is_file() for ext in SOUND_EXTENSIONS)
+
+
+def resolve_wakeup_sound(requested=None):
+    """Prefer the Portuguese classic wake-up prompt, then Asterisk English, then beep."""
+    wanted = _sound(requested or DEFAULT_WAKEUP_SOUND)
+    candidates = []
+    for name in (wanted, DEFAULT_WAKEUP_SOUND, CLASSIC_WAKEUP_SOUND):
+        if name not in candidates:
+            candidates.append(name)
+    for name in candidates:
+        if _sound_exists(name):
+            return name
+    return 'beep'
 
 
 def normalize_alarm(item, fallback_id=1):
@@ -69,15 +94,20 @@ def normalize_alarm(item, fallback_id=1):
     if not ext:
         raise ValueError('extensão obrigatória')
     alarm_id = re.sub(r'[^0-9A-Za-z_-]', '', str(item.get('id') or f'alarm{fallback_id}'))[:40] or f'alarm{fallback_id}'
+    raw_sound = str(item.get('sound') or '').strip()
+    # 0.2.20 created alarms with "beep" by default. Migrate those defaults to
+    # the real wake-up prompt so existing alarms immediately gain the recording.
+    if not raw_sound or raw_sound == 'beep':
+        raw_sound = DEFAULT_WAKEUP_SOUND
     return {
         'id': alarm_id,
         'enabled': bool(item.get('enabled', True)),
-        'label': re.sub(r'[\r\n]+', ' ', str(item.get('label') or 'Despertador'))[:80],
+        'label': re.sub(r'[\r\n]+', ' ', str(item.get('label') or 'Serviço Despertar'))[:80],
         'extension': ext,
         'time': _time(item.get('time') or '07:00'),
         'days': sorted(days),
         'date': _date(item.get('date')),
-        'sound': _sound(item.get('sound') or 'beep'),
+        'sound': _sound(raw_sound),
         'last_fired': str(item.get('last_fired') or '')[:32],
     }
 
@@ -112,20 +142,27 @@ def _event(state, text):
     state['events'] = state['events'][-50:]
 
 
-def _asterisk_originate(extension, sound='beep'):
+def _asterisk_originate(extension, sound=DEFAULT_WAKEUP_SOUND):
     ext = _extension(extension)
-    snd = _sound(sound)
+    requested = _sound(sound)
+    snd = resolve_wakeup_sound(requested)
     if not ext:
         return {'ok': False, 'output': 'extensão inválida'}
     cmd = ['asterisk', '-C', CONF, '-rx', f'channel originate PJSIP/{ext} application Playback {snd}']
     try:
         p = subprocess.run(cmd, text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=70)
-        return {'ok': p.returncode == 0, 'output': (p.stdout or '')[-4000:], 'extension': ext, 'sound': snd}
+        return {
+            'ok': p.returncode == 0,
+            'output': (p.stdout or '')[-4000:],
+            'extension': ext,
+            'sound': snd,
+            'requested_sound': requested,
+        }
     except Exception as e:
-        return {'ok': False, 'output': str(e), 'extension': ext, 'sound': snd}
+        return {'ok': False, 'output': str(e), 'extension': ext, 'sound': snd, 'requested_sound': requested}
 
 
-def test_alarm(extension, sound='beep'):
+def test_alarm(extension, sound=DEFAULT_WAKEUP_SOUND):
     return _asterisk_originate(extension, sound)
 
 
@@ -153,6 +190,10 @@ def status():
         'timezone': tz_name,
         'now': now.isoformat(timespec='seconds'),
         'active': sum(1 for x in state['alarms'] if x.get('enabled')),
+        'default_prompt': DEFAULT_WAKEUP_SOUND,
+        'resolved_prompt': resolve_wakeup_sound(DEFAULT_WAKEUP_SOUND),
+        'portuguese_prompt_available': _sound_exists(DEFAULT_WAKEUP_SOUND),
+        'classic_prompt_available': _sound_exists(CLASSIC_WAKEUP_SOUND),
     }
 
 
@@ -176,11 +217,11 @@ def scheduler_loop():
                     continue
                 if alarm.get('last_fired') == minute_key:
                     continue
-                result = _asterisk_originate(alarm['extension'], alarm.get('sound') or 'beep')
+                result = _asterisk_originate(alarm['extension'], alarm.get('sound') or DEFAULT_WAKEUP_SOUND)
                 alarm['last_fired'] = minute_key
                 if alarm.get('date'):
                     alarm['enabled'] = False
-                _event(state, f"{alarm['label']} → {alarm['extension']} @ {alarm['time']}: {'OK' if result.get('ok') else 'ERRO'} {result.get('output','')}")
+                _event(state, f"{alarm['label']} → {alarm['extension']} @ {alarm['time']}: {'OK' if result.get('ok') else 'ERRO'} prompt={result.get('sound','')} {result.get('output','')}")
                 changed = True
             if changed:
                 _write_json(STATE, state)

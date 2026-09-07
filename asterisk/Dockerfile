@@ -52,9 +52,35 @@ RUN ./configure --with-pjproject-bundled --with-jansson-bundled \
        --enable format_wav \
        --enable format_wav_gsm \
        --enable format_gsm \
+       --enable CORE-SOUNDS-EN-WAV \
+       --enable EXTRA-SOUNDS-EN-WAV \
        menuselect.makeopts || true \
     && make -j"$(nproc)" \
     && make install DESTDIR=/stage
+
+# FreePBX/Issabel's classic wake-up service uses the prompt named
+# this-is-yr-wakeup-call.  Prefer the Portuguese Disc-OS recording when the
+# upstream archive is reachable; the Asterisk English Extra Sounds package
+# selected above remains a deterministic fallback.
+RUN set -eu; \
+    mkdir -p /tmp/discosounds /stage/var/lib/asterisk/sounds/pt_BR; \
+    archive=/tmp/Disc-OS-Sounds-1.0-pt_BR.tar.gz; \
+    if wget -q --tries=3 --timeout=30 \
+      "https://downloads.sourceforge.net/project/disc-os/Disc-OS%20Sounds/1.0-RELEASE/Disc-OS-Sounds-1.0-pt_BR.tar.gz" \
+      -O "$archive" && tar -tzf "$archive" >/dev/null 2>&1; then \
+        tar -xzf "$archive" -C /tmp/discosounds; \
+        prompt="$(find /tmp/discosounds -type f \( -name 'this-is-yr-wakeup-call.wav' -o -name 'this-is-yr-wakeup-call.WAV' -o -name 'this-is-yr-wakeup-call.gsm' -o -name 'this-is-yr-wakeup-call.ulaw' -o -name 'this-is-yr-wakeup-call.alaw' \) | head -n 1)"; \
+        if [ -n "$prompt" ]; then \
+          ext="${prompt##*.}"; \
+          cp "$prompt" "/stage/var/lib/asterisk/sounds/pt_BR/this-is-yr-wakeup-call.${ext}"; \
+          echo "Disc-OS Portuguese wake-up prompt installed: ${ext}"; \
+        else \
+          echo "WARNING: Disc-OS archive did not contain this-is-yr-wakeup-call; using Asterisk English fallback"; \
+        fi; \
+    else \
+      echo "WARNING: Portuguese Disc-OS sounds unavailable; using Asterisk English fallback"; \
+    fi; \
+    rm -rf "$archive" /tmp/discosounds
 
 RUN git clone "$CHAN_DONGLE_REPO" /src/chan_dongle \
     && cd /src/chan_dongle \
