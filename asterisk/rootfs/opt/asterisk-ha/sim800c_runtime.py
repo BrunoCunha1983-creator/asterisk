@@ -326,8 +326,10 @@ class SIM800CManager:
         text = str(text or '').replace('\x1a', '').strip()
         if not number or not text:
             return {'ok': False, 'output': 'número e mensagem são obrigatórios'}
+        prep = self.command('AT+CMGF=1')
+        if not prep.get('ok'):
+            return prep
         with self._cmd_lock:
-            self.command('AT+CMGF=1')
             with self._cv:
                 self._responses.clear()
             self._write((f'AT+CMGS="{number}"\r').encode())
