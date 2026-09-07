@@ -10,6 +10,8 @@ from gsm_ui import augment_index as augment_gsm_index
 from security_ui import augment_index as augment_security_index
 from gsm_runtime import normalize_gsm_state
 from webrtc import augment_index as augment_webrtc_index, ensure_webrtc_state
+from sim800c_runtime import SIM800C, normalize_sim800c_state
+from sim800c_ui import augment_index as augment_sim800c_index
 from network import (
     DEFAULT_NETWORK,
     augment_index as augment_network_index,
@@ -21,12 +23,14 @@ from network import (
 
 
 # Apply feature UI layers over the base SIPcord + IVR page.
-server.INDEX = augment_security_index(
-    augment_gsm_index(
-        augment_network_index(
-            augment_dashboard_index(
-                augment_webrtc_index(
-                    augment_ht503_index(server.INDEX)
+server.INDEX = augment_sim800c_index(
+    augment_security_index(
+        augment_gsm_index(
+            augment_network_index(
+                augment_dashboard_index(
+                    augment_webrtc_index(
+                        augment_ht503_index(server.INDEX)
+                    )
                 )
             )
         )
@@ -42,14 +46,15 @@ _webrtc_extensions = set()
 
 
 def normalize_pbx(data):
-    """Extend PBX normalization with HT503, WebRTC, network/NAT and real GSM state."""
+    """Extend PBX normalization with HT503, WebRTC, SIM800C, network/NAT and GSM state."""
     data, changed, removed = _base_normalize_pbx(data)
     data, ht_changed = ensure_ht503_state(data)
     validate_ht503_state(data)
     data, webrtc_changed = ensure_webrtc_state(data)
+    data, sim800_changed = normalize_sim800c_state(data)
     data, net_changed = ensure_network_state(data)
     data, gsm_changed = normalize_gsm_state(data)
-    return data, bool(changed or ht_changed or webrtc_changed or net_changed or gsm_changed), removed
+    return data, bool(changed or ht_changed or webrtc_changed or sim800_changed or net_changed or gsm_changed), removed
 
 
 def _reload_failed(result):
@@ -82,11 +87,6 @@ def ast_compat(command):
     """Provide Asterisk 22 CLI compatibility and safe GSM runtime reporting."""
     command = str(command).strip()
 
-    # `dongle show devices` can itself return an Asterisk CLI error with exit
-    # status 0 when chan_dongle is not loaded. The old parser interpreted
-    # "No such command ..." as a connected modem called "No". Also, with no
-    # ttyUSB/ttyACM nodes there cannot be a real chan_dongle modem. Return the
-    # canonical empty-device text in both cases so Dashboard/HA stay at zero.
     if command == 'dongle show devices':
         result = _base_ast(command)
         try:
@@ -176,21 +176,22 @@ def endpoint_lines_compat(*args, **kwargs):
 
 
 def render_managed_compat(data):
-    """Render endpoint media policy, WebRTC state and transport NAT addresses together."""
+    """Render endpoint media policy, WebRTC, SIM800C and transport NAT state together."""
     global _current_network, _webrtc_extensions
     data, _ = ensure_network_state(data)
     data, _ = ensure_webrtc_state(data)
+    data, _ = normalize_sim800c_state(data)
     _current_network = dict(data.get('network') or DEFAULT_NETWORK)
     _webrtc_extensions = {
         str(e.get('extension') or '').strip()
         for e in (data.get('extensions') or [])
         if isinstance(e, dict) and e.get('webrtc') and str(e.get('extension') or '').strip()
     }
+    SIM800C.configure(data.get('sim800c') or {})
     render_transport_nat(server.CONF, data)
     return _base_render_managed(data)
 
 
-# backend.render_managed resolves endpoint_lines in backend's module globals.
 backend.endpoint_lines = endpoint_lines_compat
 server.normalize_pbx = normalize_pbx
 server.ast = ast_compat
@@ -198,7 +199,7 @@ server.render_managed = render_managed_compat
 
 
 class H(server.H):
-    """Add network discovery to the existing Ingress API."""
+    """Add network discovery and SIM800C control to the existing Ingress API."""
     def do_GET(self):
         path = urlparse(self.path).path.rstrip('/') or '/'
         if path == '/api/network-detect':
@@ -209,7 +210,46 @@ class H(server.H):
                 'local_nets': detect_local_networks(),
             })
             return
+        if path == '/api/sim800c-status':
+            if not self._guard_web():
+                return
+            try:
+                pbx = server.load_pbx_state()
+                SIM800C.configure((pbx.get('sim800c') or {}))
+                self.sendj(SIM800C.status())
+            except Exception as e:
+                self.sendj({'connected': False, 'error': str(e)}, 500)
+            return
         super().do_GET()
+
+    def do_POST(self):
+        path = urlparse(self.path).path.rstrip('/') or '/'
+        if path != '/api/sim800c-action':
+            return super().do_POST()
+        if not self._guard_web():
+            return
+        data = self.body()
+        try:
+            pbx = server.load_pbx_state()
+            SIM800C.configure((pbx.get('sim800c') or {}))
+            action = str(data.get('action') or '').strip().lower()
+            if action == 'init':
+                result = SIM800C.initialize()
+            elif action == 'refresh':
+                result = {'ok': True, 'status': SIM800C.refresh()}
+            elif action == 'dial':
+                result = SIM800C.dial(data.get('number', ''))
+            elif action == 'answer':
+                result = SIM800C.answer()
+            elif action == 'hangup':
+                result = SIM800C.hangup()
+            elif action == 'sms':
+                result = SIM800C.send_sms(data.get('number', ''), data.get('text', ''))
+            else:
+                result = {'ok': False, 'output': 'ação SIM800C desconhecida'}
+            self.sendj(result, 200 if result.get('ok') else 400)
+        except Exception as e:
+            self.sendj({'ok': False, 'output': str(e)}, 500)
 
 
 if __name__ == '__main__':

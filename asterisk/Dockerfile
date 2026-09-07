@@ -69,7 +69,7 @@ RUN git clone "$CHAN_DONGLE_REPO" /src/chan_dongle \
 FROM debian:bookworm-slim
 ENV DEBIAN_FRONTEND=noninteractive
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    ca-certificates python3 curl jq usbutils usb-modeswitch usb-modeswitch-data udev fail2ban nftables \
+    ca-certificates python3 python3-serial curl jq usbutils usb-modeswitch usb-modeswitch-data udev fail2ban nftables \
     libedit2 libxml2 libxslt1.1 libsqlite3-0 libuuid1 libssl3 libncurses6 libcurl4 libsrtp2-1 \
     libopus0 libspeex1 libspeexdsp1 libgsm1 libogg0 libvorbis0a libvorbisenc2 libvorbisfile3 \
     liburiparser1 libnewt0.52 \
@@ -85,6 +85,7 @@ RUN set -eu; \
     missing="$( { ldd /usr/sbin/asterisk; find /usr/lib/asterisk/modules -type f -name '*.so' -exec ldd {} \; ; } 2>/dev/null | grep 'not found' || true )"; \
     if [ -n "$missing" ]; then echo "Unresolved runtime libraries:"; echo "$missing"; exit 1; fi; \
     /usr/sbin/asterisk -V; \
+    python3 -c 'import serial; print(serial.VERSION)'; \
     fail2ban-client -V; \
     python3 /opt/asterisk-ha/fail2ban_setup.py >/tmp/fail2ban-generated.json; \
     fail2ban-client -t; \
