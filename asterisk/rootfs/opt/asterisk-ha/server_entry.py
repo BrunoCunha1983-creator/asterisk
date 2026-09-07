@@ -12,7 +12,8 @@ from gsm_runtime import normalize_gsm_state
 from webrtc import augment_index as augment_webrtc_index, ensure_webrtc_state
 from sim800c_runtime import SIM800C, normalize_sim800c_state
 from sim800c_ui import augment_index as augment_sim800c_index
-from sim800c_ami import SIM800C_AMI
+from ami_runtime import AMI
+from ami_ui import augment_index as augment_ami_index
 from network import (
     DEFAULT_NETWORK,
     augment_index as augment_network_index,
@@ -24,13 +25,15 @@ from network import (
 
 
 # Apply feature UI layers over the base SIPcord + IVR page.
-server.INDEX = augment_sim800c_index(
-    augment_security_index(
-        augment_gsm_index(
-            augment_network_index(
-                augment_dashboard_index(
-                    augment_webrtc_index(
-                        augment_ht503_index(server.INDEX)
+server.INDEX = augment_ami_index(
+    augment_sim800c_index(
+        augment_security_index(
+            augment_gsm_index(
+                augment_network_index(
+                    augment_dashboard_index(
+                        augment_webrtc_index(
+                            augment_ht503_index(server.INDEX)
+                        )
                     )
                 )
             )
@@ -199,24 +202,8 @@ server.ast = ast_compat
 server.render_managed = render_managed_compat
 
 
-def _publish_sim800c_ami(event_name, extra=None):
-    st = SIM800C.status()
-    fields = {
-        'EventType': event_name,
-        'Connected': 'yes' if st.get('connected') else 'no',
-        'SIM': st.get('sim', ''),
-        'Registration': st.get('registration', ''),
-        'Operator': st.get('operator', ''),
-        'RSSI': '' if st.get('rssi') is None else st.get('rssi'),
-        'CallState': st.get('call_state', ''),
-        'Caller': st.get('caller', ''),
-    }
-    fields.update(extra or {})
-    return SIM800C_AMI.user_event('SIM800C', fields)
-
-
 class H(server.H):
-    """Add network discovery, SIM800C control and AMI bridge to Ingress."""
+    """Add network discovery, PBX-wide AMI status and SIM800C control to Ingress."""
     def do_GET(self):
         path = urlparse(self.path).path.rstrip('/') or '/'
         if path == '/api/network-detect':
@@ -233,16 +220,22 @@ class H(server.H):
             try:
                 pbx = server.load_pbx_state()
                 SIM800C.configure((pbx.get('sim800c') or {}))
-                out = SIM800C.status()
-                out['ami'] = SIM800C_AMI.status()
-                self.sendj(out)
+                self.sendj(SIM800C.status())
             except Exception as e:
                 self.sendj({'connected': False, 'error': str(e)}, 500)
             return
-        if path == '/api/sim800c-ami-status':
+        if path == '/api/ami-status':
             if not self._guard_web():
                 return
-            self.sendj(SIM800C_AMI.status())
+            try:
+                out = AMI.status()
+                settings = ast_compat('manager show settings')
+                connected = ast_compat('manager show connected')
+                out['manager_settings'] = settings.get('output', '')
+                out['connected_sessions'] = connected.get('output', '')
+                self.sendj(out)
+            except Exception as e:
+                self.sendj({'connected': False, 'error': str(e), 'password_exposed': False}, 500)
             return
         super().do_GET()
 
@@ -257,39 +250,20 @@ class H(server.H):
             pbx = server.load_pbx_state()
             SIM800C.configure((pbx.get('sim800c') or {}))
             action = str(data.get('action') or '').strip().lower()
-            ami_event = None
-            ami_extra = {}
             if action == 'init':
                 result = SIM800C.initialize()
-                ami_event = 'Initialized'
             elif action == 'refresh':
                 result = {'ok': True, 'status': SIM800C.refresh()}
-                ami_event = 'Status'
             elif action == 'dial':
-                number = data.get('number', '')
-                result = SIM800C.dial(number)
-                ami_event = 'Dial'
-                ami_extra = {'Number': number}
+                result = SIM800C.dial(data.get('number', ''))
             elif action == 'answer':
                 result = SIM800C.answer()
-                ami_event = 'Answer'
             elif action == 'hangup':
                 result = SIM800C.hangup()
-                ami_event = 'Hangup'
             elif action == 'sms':
-                number = data.get('number', '')
-                result = SIM800C.send_sms(number, data.get('text', ''))
-                ami_event = 'SMSSent'
-                ami_extra = {'Number': number}
-            elif action == 'ami_test':
-                result = SIM800C_AMI.status()
-                result['ok'] = bool(result.get('connected'))
-            elif action == 'ami_publish':
-                result = _publish_sim800c_ami('ManualPublish')
+                result = SIM800C.send_sms(data.get('number', ''), data.get('text', ''))
             else:
                 result = {'ok': False, 'output': 'ação SIM800C desconhecida'}
-            if result.get('ok') and ami_event:
-                result['ami_event'] = _publish_sim800c_ami(ami_event, ami_extra)
             self.sendj(result, 200 if result.get('ok') else 400)
         except Exception as e:
             self.sendj({'ok': False, 'output': str(e)}, 500)
