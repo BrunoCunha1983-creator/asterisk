@@ -34,6 +34,10 @@ for f in /etc/asterisk-template/*; do
 done
 
 python3 "$APP/bootstrap.py"
+# extensions.conf is persistent across add-on upgrades. Always inject/update the
+# dedicated wake-up playback context before Asterisk starts so old installs get
+# the same media fix as fresh installs.
+python3 "$APP/wakeup_dialplan.py"
 
 # Fail2ban is deliberately non-fatal for PBX availability. Use fail2ban-client
 # to start BOTH server and jails, but request foreground mode so the process is
