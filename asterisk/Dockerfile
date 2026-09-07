@@ -40,6 +40,7 @@ RUN ./configure --with-pjproject-bundled --with-jansson-bundled \
        --enable app_mixmonitor \
        --enable app_chanspy \
        --enable app_page \
+       --enable app_exec \
        --enable res_parking \
        --enable res_musiconhold \
        --enable cdr_csv \
@@ -59,9 +60,9 @@ RUN ./configure --with-pjproject-bundled --with-jansson-bundled \
     && make install DESTDIR=/stage
 
 # FreePBX/Issabel's classic wake-up service uses the prompt named
-# this-is-yr-wakeup-call.  Prefer the Portuguese Disc-OS recording when the
-# upstream archive is reachable; the Asterisk English Extra Sounds package
-# selected above remains a deterministic fallback.
+# this-is-yr-wakeup-call. Prefer the Portuguese Disc-OS recording when the
+# upstream archive is reachable; the image also generates its own deterministic
+# PT-PT prompt later, so wake-up calls never depend on this download succeeding.
 RUN set -eu; \
     mkdir -p /tmp/discosounds /stage/var/lib/asterisk/sounds/pt_BR; \
     archive=/tmp/Disc-OS-Sounds-1.0-pt_BR.tar.gz; \
@@ -75,10 +76,10 @@ RUN set -eu; \
           cp "$prompt" "/stage/var/lib/asterisk/sounds/pt_BR/this-is-yr-wakeup-call.${ext}"; \
           echo "Disc-OS Portuguese wake-up prompt installed: ${ext}"; \
         else \
-          echo "WARNING: Disc-OS archive did not contain this-is-yr-wakeup-call; using Asterisk English fallback"; \
+          echo "WARNING: Disc-OS archive did not contain this-is-yr-wakeup-call; using bundled fallback"; \
         fi; \
     else \
-      echo "WARNING: Portuguese Disc-OS sounds unavailable; using Asterisk English fallback"; \
+      echo "WARNING: Portuguese Disc-OS sounds unavailable; using bundled fallback"; \
     fi; \
     rm -rf "$archive" /tmp/discosounds
 
@@ -96,6 +97,7 @@ FROM debian:bookworm-slim
 ENV DEBIAN_FRONTEND=noninteractive
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates python3 python3-serial curl jq usbutils usb-modeswitch usb-modeswitch-data udev fail2ban nftables \
+    espeak-ng sox \
     libedit2 libxml2 libxslt1.1 libsqlite3-0 libuuid1 libssl3 libncurses6 libcurl4 libsrtp2-1 \
     libopus0 libspeex1 libspeexdsp1 libgsm1 libogg0 libvorbis0a libvorbisenc2 libvorbisfile3 \
     liburiparser1 libnewt0.52 \
@@ -104,6 +106,16 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 COPY --from=builder /stage/usr/ /usr/
 COPY --from=builder /stage/var/lib/asterisk/ /var/lib/asterisk/
 COPY rootfs/ /
+
+# Deterministic PT-PT wake-up prompt owned by this add-on. Asterisk's WAV reader
+# expects telephony-friendly PCM, so resample eSpeak output to mono 8 kHz/16-bit.
+RUN set -eu; \
+    mkdir -p /var/lib/asterisk/sounds/ha; \
+    espeak-ng -v pt-pt -s 145 -w /tmp/wakeup-ha-src.wav \
+      "Bom dia. Esta e a sua chamada de despertar. Por favor, acorde."; \
+    sox /tmp/wakeup-ha-src.wav -r 8000 -c 1 -b 16 /var/lib/asterisk/sounds/ha/wakeup-pt.wav; \
+    rm -f /tmp/wakeup-ha-src.wav; \
+    test -s /var/lib/asterisk/sounds/ha/wakeup-pt.wav
 
 RUN set -eu; \
     chmod +x /usr/local/bin/asterisk-ha-start; \
