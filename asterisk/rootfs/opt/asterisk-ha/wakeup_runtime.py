@@ -13,7 +13,11 @@ CONF = '/config/asterisk/asterisk.conf'
 HEARTBEAT = Path('/run/asterisk-wakeup-heartbeat')
 SOUNDS = Path('/var/lib/asterisk/sounds')
 DEFAULT_WAKEUP_SOUND = 'pt_BR/this-is-yr-wakeup-call'
-CLASSIC_WAKEUP_SOUND = 'this-is-yr-wakeup-call'
+# Asterisk sound packages install language-specific prompts below sounds/en/.
+# Playback can resolve them by channel language, but our explicit filesystem
+# check must use the real path or it incorrectly falls all the way back to beep.
+CLASSIC_WAKEUP_SOUND = 'en/this-is-yr-wakeup-call'
+LEGACY_CLASSIC_WAKEUP_SOUND = 'this-is-yr-wakeup-call'
 SOUND_EXTENSIONS = ('.wav', '.WAV', '.gsm', '.ulaw', '.alaw', '.g722', '.sln', '.sln16')
 
 
@@ -67,10 +71,15 @@ def _sound_exists(sound):
 
 
 def resolve_wakeup_sound(requested=None):
-    """Prefer the Portuguese classic wake-up prompt, then Asterisk English, then beep."""
+    """Prefer Portuguese wake-up prompt, then the packaged English prompt, then beep."""
     wanted = _sound(requested or DEFAULT_WAKEUP_SOUND)
     candidates = []
-    for name in (wanted, DEFAULT_WAKEUP_SOUND, CLASSIC_WAKEUP_SOUND):
+    for name in (
+        wanted,
+        DEFAULT_WAKEUP_SOUND,
+        CLASSIC_WAKEUP_SOUND,
+        LEGACY_CLASSIC_WAKEUP_SOUND,
+    ):
         if name not in candidates:
             candidates.append(name)
     for name in candidates:
@@ -184,6 +193,10 @@ def status():
         scheduler_online = False
     tz, tz_name = _timezone()
     now = datetime.now(tz)
+    classic_available = (
+        _sound_exists(CLASSIC_WAKEUP_SOUND)
+        or _sound_exists(LEGACY_CLASSIC_WAKEUP_SOUND)
+    )
     return {
         **state,
         'scheduler_online': scheduler_online,
@@ -193,7 +206,7 @@ def status():
         'default_prompt': DEFAULT_WAKEUP_SOUND,
         'resolved_prompt': resolve_wakeup_sound(DEFAULT_WAKEUP_SOUND),
         'portuguese_prompt_available': _sound_exists(DEFAULT_WAKEUP_SOUND),
-        'classic_prompt_available': _sound_exists(CLASSIC_WAKEUP_SOUND),
+        'classic_prompt_available': classic_available,
     }
 
 
