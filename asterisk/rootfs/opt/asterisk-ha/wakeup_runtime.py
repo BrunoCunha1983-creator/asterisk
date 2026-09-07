@@ -13,11 +13,11 @@ CONF = '/config/asterisk/asterisk.conf'
 HEARTBEAT = Path('/run/asterisk-wakeup-heartbeat')
 SOUNDS = Path('/var/lib/asterisk/sounds')
 DEFAULT_WAKEUP_SOUND = 'pt_BR/this-is-yr-wakeup-call'
-# Asterisk sound packages install language-specific prompts below sounds/en/.
-# Playback can resolve them by channel language, but our explicit filesystem
-# check must use the real path or it incorrectly falls all the way back to beep.
-CLASSIC_WAKEUP_SOUND = 'en/this-is-yr-wakeup-call'
-LEGACY_CLASSIC_WAKEUP_SOUND = 'this-is-yr-wakeup-call'
+# Asterisk sound packages install the classic English prompt below sounds/en/.
+# Use the language-specific path only to verify the file exists. Playback must
+# receive the bare prompt name so Asterisk can apply the channel language itself.
+CLASSIC_WAKEUP_SOUND = 'this-is-yr-wakeup-call'
+CLASSIC_WAKEUP_FILE = 'en/this-is-yr-wakeup-call'
 SOUND_EXTENSIONS = ('.wav', '.WAV', '.gsm', '.ulaw', '.alaw', '.g722', '.sln', '.sln16')
 
 
@@ -70,21 +70,35 @@ def _sound_exists(sound):
     return any(Path(str(base) + ext).is_file() for ext in SOUND_EXTENSIONS)
 
 
+def _classic_sound_available():
+    return _sound_exists(CLASSIC_WAKEUP_FILE) or _sound_exists(CLASSIC_WAKEUP_SOUND)
+
+
 def resolve_wakeup_sound(requested=None):
-    """Prefer Portuguese wake-up prompt, then the packaged English prompt, then beep."""
+    """Prefer Portuguese wake-up prompt, then classic English, then beep.
+
+    The English prompt is normally stored physically under sounds/en/, but
+    Playback should receive only ``this-is-yr-wakeup-call``. Passing ``en/``
+    explicitly can make language-aware lookup resolve the wrong path.
+    """
     wanted = _sound(requested or DEFAULT_WAKEUP_SOUND)
-    candidates = []
-    for name in (
-        wanted,
-        DEFAULT_WAKEUP_SOUND,
-        CLASSIC_WAKEUP_SOUND,
-        LEGACY_CLASSIC_WAKEUP_SOUND,
-    ):
-        if name not in candidates:
-            candidates.append(name)
-    for name in candidates:
-        if _sound_exists(name):
-            return name
+
+    # Normalize old/saved values that explicitly contain the English folder.
+    if wanted in (CLASSIC_WAKEUP_SOUND, CLASSIC_WAKEUP_FILE):
+        return CLASSIC_WAKEUP_SOUND if _classic_sound_available() else 'beep'
+
+    # Keep an explicitly requested non-English/custom prompt when it exists.
+    if _sound_exists(wanted):
+        return wanted
+
+    # Prefer our Portuguese default when available.
+    if wanted != DEFAULT_WAKEUP_SOUND and _sound_exists(DEFAULT_WAKEUP_SOUND):
+        return DEFAULT_WAKEUP_SOUND
+
+    # The packaged English file lives in en/, but Playback gets the bare name.
+    if _classic_sound_available():
+        return CLASSIC_WAKEUP_SOUND
+
     return 'beep'
 
 
@@ -193,10 +207,7 @@ def status():
         scheduler_online = False
     tz, tz_name = _timezone()
     now = datetime.now(tz)
-    classic_available = (
-        _sound_exists(CLASSIC_WAKEUP_SOUND)
-        or _sound_exists(LEGACY_CLASSIC_WAKEUP_SOUND)
-    )
+    classic_available = _classic_sound_available()
     return {
         **state,
         'scheduler_online': scheduler_online,
