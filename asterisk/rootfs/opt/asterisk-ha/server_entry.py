@@ -14,6 +14,10 @@ from sim800c_runtime import SIM800C, normalize_sim800c_state
 from sim800c_ui import augment_index as augment_sim800c_index
 from ami_runtime import AMI
 from ami_ui import augment_index as augment_ami_index
+from wakeup_runtime import status as wakeup_status, save_alarms, test_alarm
+from wakeup_ui import augment_index as augment_wakeup_index
+from usb_tools import status as usb_tools_status, switch_huawei_1505
+from usbmode_ui import augment_index as augment_usbmode_index
 from network import (
     DEFAULT_NETWORK,
     augment_index as augment_network_index,
@@ -25,14 +29,18 @@ from network import (
 
 
 # Apply feature UI layers over the base SIPcord + IVR page.
-server.INDEX = augment_ami_index(
-    augment_sim800c_index(
-        augment_security_index(
-            augment_gsm_index(
-                augment_network_index(
-                    augment_dashboard_index(
-                        augment_webrtc_index(
-                            augment_ht503_index(server.INDEX)
+server.INDEX = augment_wakeup_index(
+    augment_usbmode_index(
+        augment_ami_index(
+            augment_sim800c_index(
+                augment_security_index(
+                    augment_gsm_index(
+                        augment_network_index(
+                            augment_dashboard_index(
+                                augment_webrtc_index(
+                                    augment_ht503_index(server.INDEX)
+                                )
+                            )
                         )
                     )
                 )
@@ -203,7 +211,7 @@ server.render_managed = render_managed_compat
 
 
 class H(server.H):
-    """Add network discovery, PBX-wide AMI status and SIM800C control to Ingress."""
+    """Add network, AMI, SIM800C, USB modem tools and wake-up service to Ingress."""
     def do_GET(self):
         path = urlparse(self.path).path.rstrip('/') or '/'
         if path == '/api/network-detect':
@@ -237,10 +245,61 @@ class H(server.H):
             except Exception as e:
                 self.sendj({'connected': False, 'error': str(e), 'password_exposed': False}, 500)
             return
+        if path == '/api/wakeup-status':
+            if not self._guard_web():
+                return
+            try:
+                self.sendj(wakeup_status())
+            except Exception as e:
+                self.sendj({'scheduler_online': False, 'alarms': [], 'events': [], 'error': str(e)}, 500)
+            return
+        if path == '/api/usb-tools-status':
+            if not self._guard_web():
+                return
+            try:
+                self.sendj(usb_tools_status())
+            except Exception as e:
+                self.sendj({'devices': [], 'error': str(e)}, 500)
+            return
         super().do_GET()
 
     def do_POST(self):
         path = urlparse(self.path).path.rstrip('/') or '/'
+
+        if path == '/api/wakeup-action':
+            if not self._guard_web():
+                return
+            data = self.body()
+            try:
+                action = str(data.get('action') or '').strip().lower()
+                if action == 'save':
+                    state = save_alarms(data.get('alarms') or [])
+                    self.sendj({'ok': True, **state})
+                    return
+                if action == 'test':
+                    result = test_alarm(data.get('extension', ''), data.get('sound', 'beep'))
+                    self.sendj(result, 200 if result.get('ok') else 400)
+                    return
+                self.sendj({'ok': False, 'output': 'ação de despertador desconhecida'}, 400)
+            except Exception as e:
+                self.sendj({'ok': False, 'output': str(e)}, 400)
+            return
+
+        if path == '/api/usb-action':
+            if not self._guard_web():
+                return
+            data = self.body()
+            try:
+                action = str(data.get('action') or '').strip().lower()
+                if action == 'switch_huawei_1505':
+                    result = switch_huawei_1505()
+                    self.sendj(result, 200 if result.get('ok') else 400)
+                    return
+                self.sendj({'ok': False, 'output': 'ação USB desconhecida'}, 400)
+            except Exception as e:
+                self.sendj({'ok': False, 'output': str(e)}, 500)
+            return
+
         if path != '/api/sim800c-action':
             return super().do_POST()
         if not self._guard_web():
