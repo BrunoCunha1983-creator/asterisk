@@ -12,12 +12,9 @@ OPTIONS = Path('/data/options.json')
 CONF = '/config/asterisk/asterisk.conf'
 HEARTBEAT = Path('/run/asterisk-wakeup-heartbeat')
 SOUNDS = Path('/var/lib/asterisk/sounds')
+WAKEUP_DIALPLAN_HELPER = '/opt/asterisk-ha/wakeup_dialplan.py'
+WAKEUP_ENGINE_VERSION = '0.2.26'
 DEFAULT_WAKEUP_SOUND = 'pt_BR/this-is-yr-wakeup-call'
-# Asterisk sound packages install the classic English prompt below sounds/en/.
-# Use the language-specific path only to verify the file exists. The actual
-# wake-up call now runs through the dedicated [wakeup-call] dialplan context,
-# which answers, waits for media, tries absolute prompt paths and has a spoken
-# core-sounds fallback instead of immediately hanging up on Playback failure.
 CLASSIC_WAKEUP_SOUND = 'this-is-yr-wakeup-call'
 CLASSIC_WAKEUP_FILE = 'en/this-is-yr-wakeup-call'
 SOUND_EXTENSIONS = ('.wav', '.WAV', '.gsm', '.ulaw', '.alaw', '.g722', '.sln', '.sln16')
@@ -79,19 +76,14 @@ def _classic_sound_available():
 def resolve_wakeup_sound(requested=None):
     """Report the preferred prompt that the dialplan will attempt first."""
     wanted = _sound(requested or DEFAULT_WAKEUP_SOUND)
-
     if wanted in (CLASSIC_WAKEUP_SOUND, CLASSIC_WAKEUP_FILE):
         return CLASSIC_WAKEUP_SOUND if _classic_sound_available() else 'dialplan-fallback'
-
     if _sound_exists(wanted):
         return wanted
-
     if wanted != DEFAULT_WAKEUP_SOUND and _sound_exists(DEFAULT_WAKEUP_SOUND):
         return DEFAULT_WAKEUP_SOUND
-
     if _classic_sound_available():
         return CLASSIC_WAKEUP_SOUND
-
     return 'dialplan-fallback'
 
 
@@ -156,38 +148,77 @@ def _event(state, text):
     state['events'] = state['events'][-50:]
 
 
-def _asterisk_originate(extension, sound=DEFAULT_WAKEUP_SOUND):
-    """Ring the extension, then hand the answered channel to [wakeup-call].
+def _run(cmd, timeout=20):
+    try:
+        p = subprocess.run(cmd, text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=timeout)
+        return p.returncode, (p.stdout or '')[-6000:]
+    except Exception as exc:
+        return 99, str(exc)
 
-    Using a dialplan extension instead of running Playback directly gives RTP
-    time to settle and lets us try multiple prompts plus a guaranteed audible
-    fallback before hanging up.
-    """
+
+def _prepare_wakeup_context():
+    """Reinstall, reload and verify the persistent [wakeup-call] context."""
+    helper_rc, helper_out = _run(['/usr/bin/python3', WAKEUP_DIALPLAN_HELPER], 10)
+    reload_rc, reload_out = _run(['asterisk', '-C', CONF, '-rx', 'dialplan reload'], 15)
+    show_rc, show_out = _run(['asterisk', '-C', CONF, '-rx', 'dialplan show wakeup-call'], 15)
+    low = show_out.lower()
+    present = (
+        show_rc == 0
+        and 'wakeup-call' in low
+        and ('extension' in low or "'s'" in low or ' s ' in low)
+        and 'not found' not in low
+        and 'no such context' not in low
+    )
+    return {
+        'ok': bool(helper_rc == 0 and reload_rc == 0 and present),
+        'helper_rc': helper_rc,
+        'reload_rc': reload_rc,
+        'show_rc': show_rc,
+        'helper_output': helper_out,
+        'reload_output': reload_out,
+        'show_output': show_out,
+    }
+
+
+def _asterisk_originate(extension, sound=DEFAULT_WAKEUP_SOUND):
+    """Ring the extension and run the verified [wakeup-call] dialplan."""
     ext = _extension(extension)
     requested = _sound(sound)
     snd = resolve_wakeup_sound(requested)
     if not ext:
-        return {'ok': False, 'output': 'extensão inválida'}
-    cmd = ['asterisk', '-C', CONF, '-rx', f'channel originate PJSIP/{ext} extension s@wakeup-call']
-    try:
-        p = subprocess.run(cmd, text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=70)
-        return {
-            'ok': p.returncode == 0,
-            'output': (p.stdout or '')[-4000:],
-            'extension': ext,
-            'sound': snd,
-            'requested_sound': requested,
-            'call_mode': 'dialplan:wakeup-call',
-        }
-    except Exception as e:
+        return {'ok': False, 'output': 'extensão inválida', 'engine_version': WAKEUP_ENGINE_VERSION}
+
+    prepared = _prepare_wakeup_context()
+    if not prepared.get('ok'):
+        diag = (
+            'O contexto [wakeup-call] não ficou carregado.\n'
+            f"helper rc={prepared.get('helper_rc')} {prepared.get('helper_output','')}\n"
+            f"reload rc={prepared.get('reload_rc')} {prepared.get('reload_output','')}\n"
+            f"show rc={prepared.get('show_rc')} {prepared.get('show_output','')}"
+        )
         return {
             'ok': False,
-            'output': str(e),
+            'output': diag[-6000:],
             'extension': ext,
             'sound': snd,
             'requested_sound': requested,
             'call_mode': 'dialplan:wakeup-call',
+            'engine_version': WAKEUP_ENGINE_VERSION,
+            'dialplan_ready': False,
         }
+
+    cmd = ['asterisk', '-C', CONF, '-rx', f'channel originate PJSIP/{ext} extension s@wakeup-call']
+    rc, out = _run(cmd, 70)
+    return {
+        'ok': rc == 0,
+        'output': out,
+        'extension': ext,
+        'sound': snd,
+        'requested_sound': requested,
+        'call_mode': 'dialplan:wakeup-call',
+        'engine_version': WAKEUP_ENGINE_VERSION,
+        'dialplan_ready': True,
+    }
 
 
 def test_alarm(extension, sound=DEFAULT_WAKEUP_SOUND):
@@ -224,6 +255,7 @@ def status():
         'portuguese_prompt_available': _sound_exists(DEFAULT_WAKEUP_SOUND),
         'classic_prompt_available': classic_available,
         'call_mode': 'dialplan:wakeup-call',
+        'engine_version': WAKEUP_ENGINE_VERSION,
     }
 
 
@@ -251,7 +283,7 @@ def scheduler_loop():
                 alarm['last_fired'] = minute_key
                 if alarm.get('date'):
                     alarm['enabled'] = False
-                _event(state, f"{alarm['label']} → {alarm['extension']} @ {alarm['time']}: {'OK' if result.get('ok') else 'ERRO'} mode={result.get('call_mode','')} prompt={result.get('sound','')} {result.get('output','')}")
+                _event(state, f"{alarm['label']} → {alarm['extension']} @ {alarm['time']}: {'OK' if result.get('ok') else 'ERRO'} engine={result.get('engine_version','')} mode={result.get('call_mode','')} prompt={result.get('sound','')} {result.get('output','')}")
                 changed = True
             if changed:
                 _write_json(STATE, state)
