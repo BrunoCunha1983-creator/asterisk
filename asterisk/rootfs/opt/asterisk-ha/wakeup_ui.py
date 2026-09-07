@@ -17,6 +17,7 @@ def augment_index(index):
 
     js = r'''
 const WAKE_DAYS=['Seg','Ter','Qua','Qui','Sex','Sáb','Dom'];
+const WAKE_DEFAULT_SOUND='pt_BR/this-is-yr-wakeup-call';
 async function wakeup(a){
   let st={alarms:[],events:[]};
   try{st=await api('api/wakeup-status')}catch(e){st={alarms:[],events:[],error:String(e)}}
@@ -27,33 +28,39 @@ async function wakeup(a){
     return `<div class=item>
       <div class=row>
         <div><label>Ativo</label><select id=wen${i}><option value=1 ${x.enabled?'selected':''}>Sim</option><option value=0 ${x.enabled?'':'selected'}>Não</option></select></div>
-        <div><label>Nome</label><input id=wlabel${i} value="${esc(x.label||'Despertador')}"></div>
+        <div><label>Nome</label><input id=wlabel${i} value="${esc(x.label||'Serviço Despertar')}"></div>
         <div><label>Extensão</label><select id=wext${i}>${extOpts(x.extension)}${exts.includes(String(x.extension||''))?'':`<option selected>${esc(x.extension||'')}</option>`}</select></div>
         <div><label>Hora</label><input id=wtime${i} type=time value="${esc(x.time||'07:00')}"></div>
         <div><label>Data única (opcional)</label><input id=wdate${i} type=date value="${esc(x.date||'')}"></div>
-        <div><label>Som Asterisk</label><input id=wsound${i} value="${esc(x.sound||'beep')}" placeholder="beep ou custom/nome"></div>
+        <div><label>Gravação</label><input id=wsound${i} value="${esc(x.sound||WAKE_DEFAULT_SOUND)}" placeholder="${WAKE_DEFAULT_SOUND}"></div>
       </div>
       <div class=note><b>Dias recorrentes:</b> ${days}<br><span class=sub>Se definires uma data única, os dias da semana são ignorados e o despertador desativa-se depois de tocar.</span></div>
-      <div class=actions><button class=btn onclick="testWake(${i})">Testar agora</button><button class=btn onclick="delWake(${i})">Apagar</button></div>
+      <div class=actions><button class=btn onclick="testWake(${i})">▶ Testar gravação agora</button><button class=btn onclick="delWake(${i})">Apagar</button></div>
       <div class=sub>Último disparo: ${esc(x.last_fired||'—')}</div>
     </div>`;
   }).join('');
+  let promptState=st.portuguese_prompt_available
+    ? '<span class="ok"><b>PORTUGUÊS INSTALADO</b></span> — “Serviço Despertar / Por favor acorde”'
+    : (st.classic_prompt_available
+      ? '<span class="warn"><b>FALLBACK INGLÊS</b></span> — this-is-yr-wakeup-call'
+      : '<span class="bad"><b>FALLBACK BEEP</b></span>');
   a.innerHTML=`<div class=grid>
     <div class=card><div class=sub>Serviço</div><div class="big ${st.scheduler_online?'ok':'bad'}">${st.scheduler_online?'ONLINE':'OFFLINE'}</div><div class=sub>${esc(st.timezone||'Europe/Lisbon')}</div></div>
     <div class=card><div class=sub>Despertadores ativos</div><div class=big>${st.active||0}</div></div>
     <div class=card><div class=sub>Hora do serviço</div><div class=big>${esc((st.now||'').slice(11,16)||'—')}</div></div>
   </div>
-  <div class=card><h2>Despertador Asterisk</h2>
-    <div class=note>O Asterisk liga automaticamente para a extensão escolhida à hora programada. Ao atender, reproduz o som configurado. Os horários ficam guardados mesmo após reiniciar o add-on.</div>
+  <div class=card><h2>Serviço Despertar — Asterisk</h2>
+    <div class=note><b>Gravação padrão:</b> ${promptState}<br><span class=sub>Prompt resolvido pelo Asterisk: <code>${esc(st.resolved_prompt||'—')}</code></span></div>
+    <div class=note>À hora programada o Asterisk liga para a extensão escolhida. Quando atenderes, toca a gravação de despertar em vez do simples beep. Os horários ficam guardados após reiniciar o add-on.</div>
     ${rows||'<div class=item>Nenhum despertador configurado.</div>'}
-    <div class=actions><button class=btn onclick=addWake()>+ Despertador</button><button class="btn primary" onclick=saveWake()>Guardar</button><button class=btn onclick="wakeup(E('#app'))">Atualizar</button></div>
+    <div class=actions><button class=btn onclick=addWake()>+ Chamada de Despertar</button><button class="btn primary" onclick=saveWake()>Guardar</button><button class=btn onclick="wakeup(E('#app'))">Atualizar</button></div>
     <h3>Eventos recentes</h3><pre>${esc((st.events||[]).map(e=>`${e.at||''} ${e.text||''}`).join('\n')||'Sem eventos.')}</pre>
   </div>`;
 }
 function addWake(){
   api('api/wakeup-status').then(r=>{
     let a=r.alarms||[];
-    a.push({id:'alarm'+Date.now(),enabled:true,label:'Despertador',extension:String((pbx.extensions||[])[0]?.extension||'100'),time:'07:00',days:[0,1,2,3,4],date:'',sound:'beep'});
+    a.push({id:'alarm'+Date.now(),enabled:true,label:'Serviço Despertar',extension:String((pbx.extensions||[])[0]?.extension||'100'),time:'07:00',days:[0,1,2,3,4],date:'',sound:WAKE_DEFAULT_SOUND});
     renderWakeDraft(a);
   });
 }
@@ -74,7 +81,7 @@ async function delWake(i){
 async function testWake(i){
   let st=await api('api/wakeup-status'); let x=(st.alarms||[])[i]; if(!x)return;
   let r=await api('api/wakeup-action',{method:'POST',body:JSON.stringify({action:'test',extension:E('#wext'+i).value,sound:E('#wsound'+i).value})});
-  alert(r.output||JSON.stringify(r));
+  alert((r.ok?'Chamada iniciada.\n':'Erro.\n')+(r.sound?'Gravação: '+r.sound+'\n':'')+(r.output||''));
 }
 '''
     return index.replace('</script>', js + '\n</script>', 1)
