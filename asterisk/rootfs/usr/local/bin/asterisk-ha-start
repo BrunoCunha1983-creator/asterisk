@@ -87,7 +87,6 @@ else
 fi
 
 # Keep the UI available even if Asterisk fails; diagnostics can then be used.
-# server_entry.py applies the HT503 FXS/FXO module over the base SIPcord/IVR server.
 python3 "$APP/server_entry.py" &
 UI_PID=$!
 
@@ -103,8 +102,14 @@ PY
 VFLAGS="$(python3 -c 'import sys; n=max(0,min(9,int(sys.argv[1]))); print("-"+"v"*n if n else "")' "$VERBOSE")"
 asterisk -f -C "$CONF/asterisk.conf" -U root -G root $VFLAGS &
 AST_PID=$!
+
+# Persistent Asterisk wake-up service. Asterisk rings the selected PJSIP
+# extension; this lightweight process only handles scheduling and originate.
+python3 "$APP/wakeup_scheduler.py" &
+WAKE_PID=$!
+
 cleanup() {
-  kill "$AST_PID" "$UI_PID" 2>/dev/null || true
+  kill "$AST_PID" "$UI_PID" "$WAKE_PID" 2>/dev/null || true
   if [ "$F2B_STARTED" = "1" ]; then
     fail2ban-client -s "$F2B_SOCKET" stop >/dev/null 2>&1 || true
   fi
