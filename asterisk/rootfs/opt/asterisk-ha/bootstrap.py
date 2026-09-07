@@ -79,6 +79,51 @@ if extensions_conf.exists():
         )
         extensions_conf.write_text(text)
 
+# *68 is the phone-side entry point for Serviço Despertar. Existing installs
+# keep their persistent extensions.conf, so inject/update the managed block on
+# every start just like the Echo Test above. *69 cancels the alarm created by
+# *68 for the calling extension.
+if extensions_conf.exists():
+    text=extensions_conf.read_text(errors='ignore')
+    wake_start='; SERVICO DESPERTAR MANAGED BY ASTERISK HA\n'
+    wake_end='; END SERVICO DESPERTAR MANAGED BY ASTERISK HA\n'
+    text=re.sub(
+        r'; SERVICO DESPERTAR MANAGED BY ASTERISK HA\n.*?; END SERVICO DESPERTAR MANAGED BY ASTERISK HA\n?',
+        '', text, flags=re.S
+    )
+    wake_block=(
+        wake_start
+        + '; *68 -> define/substitui um despertar único para a própria extensão.\n'
+        + '; Introduzir a hora em quatro dígitos HHMM (ex.: 0730).\n'
+        + 'exten => *68,1,NoOp(Servico Despertar - programar para ${CALLERID(num)})\n'
+        + ' same => n,Answer()\n'
+        + ' same => n,Wait(1)\n'
+        + ' same => n,Read(WAKEUP_TIME,beep,4,,3,12)\n'
+        + ' same => n,GotoIf($["${WAKEUP_TIME}"=""]?wakeup-invalid)\n'
+        + ' same => n,System(/usr/bin/python3 /opt/asterisk-ha/wakeup_phone.py set "${CALLERID(num)}" "${WAKEUP_TIME}")\n'
+        + ' same => n,GotoIf($["${SYSTEMSTATUS}"="SUCCESS"]?wakeup-ok:wakeup-invalid)\n'
+        + ' same => n(wakeup-ok),SayDigits(${WAKEUP_TIME})\n'
+        + ' same => n,Playback(beep)\n'
+        + ' same => n,Hangup()\n'
+        + ' same => n(wakeup-invalid),Playback(invalid)\n'
+        + ' same => n,Hangup()\n'
+        + 'exten => *69,1,NoOp(Servico Despertar - cancelar para ${CALLERID(num)})\n'
+        + ' same => n,Answer()\n'
+        + ' same => n,System(/usr/bin/python3 /opt/asterisk-ha/wakeup_phone.py cancel "${CALLERID(num)}")\n'
+        + ' same => n,Playback(beep)\n'
+        + ' same => n,Hangup()\n'
+        + wake_end
+    )
+    if re.search(r'^\s*\[from-internal\]\s*$', text, re.I|re.M):
+        text=re.sub(
+            r'(^\s*\[from-internal\]\s*\n)',
+            lambda m: m.group(1)+wake_block,
+            text,
+            count=1,
+            flags=re.I|re.M,
+        )
+        extensions_conf.write_text(text)
+
 # Configure PJSIP/RTP NAT after template substitutions. This keeps LAN media on
 # the private address while advertising the public address to remote phones.
 try:
