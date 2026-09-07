@@ -35,7 +35,7 @@ async function wakeup(a){
         <div><label>Gravação</label><input id=wsound${i} value="${esc(x.sound||WAKE_DEFAULT_SOUND)}" placeholder="${WAKE_DEFAULT_SOUND}"></div>
       </div>
       <div class=note><b>Dias recorrentes:</b> ${days}<br><span class=sub>Se definires uma data única, os dias da semana são ignorados e o despertador desativa-se depois de tocar.</span></div>
-      <div class=actions><button class=btn onclick="testWake(${i})">▶ Testar gravação agora</button><button class=btn onclick="delWake(${i})">Apagar</button></div>
+      <div class=actions><button class=btn onclick="testWake(${i})">▶ Testar chamada + áudio</button><button class=btn onclick="delWake(${i})">Apagar</button></div>
       <div class=sub>Último disparo: ${esc(x.last_fired||'—')}</div>
     </div>`;
   }).join('');
@@ -43,15 +43,17 @@ async function wakeup(a){
     ? '<span class="ok"><b>PORTUGUÊS INSTALADO</b></span> — “Serviço Despertar / Por favor acorde”'
     : (st.classic_prompt_available
       ? '<span class="warn"><b>FALLBACK INGLÊS</b></span> — this-is-yr-wakeup-call'
-      : '<span class="bad"><b>FALLBACK BEEP</b></span>');
+      : '<span class="bad"><b>FALLBACK DE DIALPLAN</b></span> — tom + hello + hora');
   a.innerHTML=`<div class=grid>
     <div class=card><div class=sub>Serviço</div><div class="big ${st.scheduler_online?'ok':'bad'}">${st.scheduler_online?'ONLINE':'OFFLINE'}</div><div class=sub>${esc(st.timezone||'Europe/Lisbon')}</div></div>
+    <div class=card><div class=sub>Wakeup Engine</div><div class=big>${esc(st.engine_version||'ANTIGO')}</div><div class=sub>${esc(st.call_mode||'modo antigo')}</div></div>
     <div class=card><div class=sub>Despertadores ativos</div><div class=big>${st.active||0}</div></div>
     <div class=card><div class=sub>Hora do serviço</div><div class=big>${esc((st.now||'').slice(11,16)||'—')}</div></div>
   </div>
   <div class=card><h2>Serviço Despertar — Asterisk</h2>
-    <div class=note><b>Gravação padrão:</b> ${promptState}<br><span class=sub>Prompt resolvido pelo Asterisk: <code>${esc(st.resolved_prompt||'—')}</code></span></div>
-    <div class=note>À hora programada o Asterisk liga para a extensão escolhida. Quando atenderes, toca a gravação de despertar em vez do simples beep. Os horários ficam guardados após reiniciar o add-on.</div>
+    <div class=note><b>Motor esperado:</b> <code>0.2.26 / dialplan:wakeup-call</code><br><span class=sub>Se aqui aparecer ANTIGO ou não aparecer dialplan:wakeup-call, o Home Assistant ainda não está a executar esta versão.</span></div>
+    <div class=note><b>Gravação padrão:</b> ${promptState}<br><span class=sub>Prompt resolvido: <code>${esc(st.resolved_prompt||'—')}</code></span></div>
+    <div class=note>O botão de teste reinstala e recarrega o contexto [wakeup-call], confirma que ele existe no Asterisk e só então inicia a chamada. A chamada deve tocar um tom antes da gravação.</div>
     ${rows||'<div class=item>Nenhum despertador configurado.</div>'}
     <div class=actions><button class=btn onclick=addWake()>+ Chamada de Despertar</button><button class="btn primary" onclick=saveWake()>Guardar</button><button class=btn onclick="wakeup(E('#app'))">Atualizar</button></div>
     <h3>Eventos recentes</h3><pre>${esc((st.events||[]).map(e=>`${e.at||''} ${e.text||''}`).join('\n')||'Sem eventos.')}</pre>
@@ -81,7 +83,13 @@ async function delWake(i){
 async function testWake(i){
   let st=await api('api/wakeup-status'); let x=(st.alarms||[])[i]; if(!x)return;
   let r=await api('api/wakeup-action',{method:'POST',body:JSON.stringify({action:'test',extension:E('#wext'+i).value,sound:E('#wsound'+i).value})});
-  alert((r.ok?'Chamada iniciada.\n':'Erro.\n')+(r.sound?'Gravação: '+r.sound+'\n':'')+(r.output||''));
+  alert((r.ok?'Chamada iniciada.\n':'ERRO — chamada não iniciada.\n')+
+    'Engine: '+(r.engine_version||'ANTIGO')+'\n'+
+    'Modo: '+(r.call_mode||'desconhecido')+'\n'+
+    'Dialplan pronto: '+(r.dialplan_ready===true?'SIM':r.dialplan_ready===false?'NÃO':'?')+'\n'+
+    (r.sound?'Gravação: '+r.sound+'\n':'')+
+    (r.output||''));
+  await wakeup(E('#app'));
 }
 '''
     return index.replace('</script>', js + '\n</script>', 1)
