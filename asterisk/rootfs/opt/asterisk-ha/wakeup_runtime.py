@@ -14,8 +14,10 @@ HEARTBEAT = Path('/run/asterisk-wakeup-heartbeat')
 SOUNDS = Path('/var/lib/asterisk/sounds')
 DEFAULT_WAKEUP_SOUND = 'pt_BR/this-is-yr-wakeup-call'
 # Asterisk sound packages install the classic English prompt below sounds/en/.
-# Use the language-specific path only to verify the file exists. Playback must
-# receive the bare prompt name so Asterisk can apply the channel language itself.
+# Use the language-specific path only to verify the file exists. The actual
+# wake-up call now runs through the dedicated [wakeup-call] dialplan context,
+# which answers, waits for media, tries absolute prompt paths and has a spoken
+# core-sounds fallback instead of immediately hanging up on Playback failure.
 CLASSIC_WAKEUP_SOUND = 'this-is-yr-wakeup-call'
 CLASSIC_WAKEUP_FILE = 'en/this-is-yr-wakeup-call'
 SOUND_EXTENSIONS = ('.wav', '.WAV', '.gsm', '.ulaw', '.alaw', '.g722', '.sln', '.sln16')
@@ -75,31 +77,22 @@ def _classic_sound_available():
 
 
 def resolve_wakeup_sound(requested=None):
-    """Prefer Portuguese wake-up prompt, then classic English, then beep.
-
-    The English prompt is normally stored physically under sounds/en/, but
-    Playback should receive only ``this-is-yr-wakeup-call``. Passing ``en/``
-    explicitly can make language-aware lookup resolve the wrong path.
-    """
+    """Report the preferred prompt that the dialplan will attempt first."""
     wanted = _sound(requested or DEFAULT_WAKEUP_SOUND)
 
-    # Normalize old/saved values that explicitly contain the English folder.
     if wanted in (CLASSIC_WAKEUP_SOUND, CLASSIC_WAKEUP_FILE):
-        return CLASSIC_WAKEUP_SOUND if _classic_sound_available() else 'beep'
+        return CLASSIC_WAKEUP_SOUND if _classic_sound_available() else 'dialplan-fallback'
 
-    # Keep an explicitly requested non-English/custom prompt when it exists.
     if _sound_exists(wanted):
         return wanted
 
-    # Prefer our Portuguese default when available.
     if wanted != DEFAULT_WAKEUP_SOUND and _sound_exists(DEFAULT_WAKEUP_SOUND):
         return DEFAULT_WAKEUP_SOUND
 
-    # The packaged English file lives in en/, but Playback gets the bare name.
     if _classic_sound_available():
         return CLASSIC_WAKEUP_SOUND
 
-    return 'beep'
+    return 'dialplan-fallback'
 
 
 def normalize_alarm(item, fallback_id=1):
@@ -118,8 +111,6 @@ def normalize_alarm(item, fallback_id=1):
         raise ValueError('extensão obrigatória')
     alarm_id = re.sub(r'[^0-9A-Za-z_-]', '', str(item.get('id') or f'alarm{fallback_id}'))[:40] or f'alarm{fallback_id}'
     raw_sound = str(item.get('sound') or '').strip()
-    # 0.2.20 created alarms with "beep" by default. Migrate those defaults to
-    # the real wake-up prompt so existing alarms immediately gain the recording.
     if not raw_sound or raw_sound == 'beep':
         raw_sound = DEFAULT_WAKEUP_SOUND
     return {
@@ -166,12 +157,18 @@ def _event(state, text):
 
 
 def _asterisk_originate(extension, sound=DEFAULT_WAKEUP_SOUND):
+    """Ring the extension, then hand the answered channel to [wakeup-call].
+
+    Using a dialplan extension instead of running Playback directly gives RTP
+    time to settle and lets us try multiple prompts plus a guaranteed audible
+    fallback before hanging up.
+    """
     ext = _extension(extension)
     requested = _sound(sound)
     snd = resolve_wakeup_sound(requested)
     if not ext:
         return {'ok': False, 'output': 'extensão inválida'}
-    cmd = ['asterisk', '-C', CONF, '-rx', f'channel originate PJSIP/{ext} application Playback {snd}']
+    cmd = ['asterisk', '-C', CONF, '-rx', f'channel originate PJSIP/{ext} extension s@wakeup-call']
     try:
         p = subprocess.run(cmd, text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=70)
         return {
@@ -180,9 +177,17 @@ def _asterisk_originate(extension, sound=DEFAULT_WAKEUP_SOUND):
             'extension': ext,
             'sound': snd,
             'requested_sound': requested,
+            'call_mode': 'dialplan:wakeup-call',
         }
     except Exception as e:
-        return {'ok': False, 'output': str(e), 'extension': ext, 'sound': snd, 'requested_sound': requested}
+        return {
+            'ok': False,
+            'output': str(e),
+            'extension': ext,
+            'sound': snd,
+            'requested_sound': requested,
+            'call_mode': 'dialplan:wakeup-call',
+        }
 
 
 def test_alarm(extension, sound=DEFAULT_WAKEUP_SOUND):
@@ -218,6 +223,7 @@ def status():
         'resolved_prompt': resolve_wakeup_sound(DEFAULT_WAKEUP_SOUND),
         'portuguese_prompt_available': _sound_exists(DEFAULT_WAKEUP_SOUND),
         'classic_prompt_available': classic_available,
+        'call_mode': 'dialplan:wakeup-call',
     }
 
 
@@ -245,7 +251,7 @@ def scheduler_loop():
                 alarm['last_fired'] = minute_key
                 if alarm.get('date'):
                     alarm['enabled'] = False
-                _event(state, f"{alarm['label']} → {alarm['extension']} @ {alarm['time']}: {'OK' if result.get('ok') else 'ERRO'} prompt={result.get('sound','')} {result.get('output','')}")
+                _event(state, f"{alarm['label']} → {alarm['extension']} @ {alarm['time']}: {'OK' if result.get('ok') else 'ERRO'} mode={result.get('call_mode','')} prompt={result.get('sound','')} {result.get('output','')}")
                 changed = True
             if changed:
                 _write_json(STATE, state)
