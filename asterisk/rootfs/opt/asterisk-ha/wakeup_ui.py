@@ -3,7 +3,10 @@
 
 def augment_index(index):
     if "'Despertador'" not in index:
-        index = index.replace("'Chamadas','Configuração'", "'Chamadas','Despertador','Configuração'", 1)
+        if "'Chamadas','AMI','Configuração'" in index:
+            index = index.replace("'Chamadas','AMI','Configuração'", "'Chamadas','Despertador','AMI','Configuração'", 1)
+        else:
+            index = index.replace("'Chamadas','Configuração'", "'Chamadas','Despertador','Configuração'", 1)
         index = index.replace(
             "if(current==='Chamadas') calls(a);",
             "if(current==='Chamadas') calls(a); if(current==='Despertador') wakeup(a);",
@@ -48,11 +51,9 @@ async function wakeup(a){
   </div>`;
 }
 function addWake(){
-  let st=window._wakeLocal||null;
   api('api/wakeup-status').then(r=>{
     let a=r.alarms||[];
     a.push({id:'alarm'+Date.now(),enabled:true,label:'Despertador',extension:String((pbx.extensions||[])[0]?.extension||'100'),time:'07:00',days:[0,1,2,3,4],date:'',sound:'beep'});
-    window._wakeDraft=a;
     renderWakeDraft(a);
   });
 }
