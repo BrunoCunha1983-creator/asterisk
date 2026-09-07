@@ -1,0 +1,19 @@
+Disc-OS Portuguese Asterisk sound prompt notice
+================================================
+
+This image may include the Portuguese wake-up prompt `this-is-yr-wakeup-call`
+from the Disc-OS Sounds 1.0 pt_BR package.
+
+Project / attribution: Disc-OS Team
+Source archive:
+https://sourceforge.net/projects/disc-os/files/Disc-OS%20Sounds/1.0-RELEASE/Disc-OS-Sounds-1.0-pt_BR.tar.gz/download
+Project page: https://disc-os.org/
+
+The Disc-OS project states that its Portuguese voice prompts are released under
+a Creative Commons 2.5 Brazil license. This add-on uses the prompt as an
+Asterisk wake-up-call recording and does not sell or relicense the recording.
+
+If the Disc-OS archive is unavailable during image build, the add-on does not
+copy the Portuguese recording and falls back to Asterisk's standard English
+`this-is-yr-wakeup-call` Extra Sounds prompt, and finally to `beep` if neither
+recording is available.
