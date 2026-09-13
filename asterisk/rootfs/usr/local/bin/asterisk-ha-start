@@ -140,8 +140,14 @@ AST_PID=$!
 python3 "$APP/wakeup_scheduler.py" &
 WAKE_PID=$!
 
+# chan_dongle USB/module watchdog. It waits for Asterisk through normal CLI
+# retries, restores saved GSM profiles when their serial ports reappear, and
+# reloads chan_dongle only when the effective binding changes.
+python3 "$APP/dongle_watchdog.py" &
+DONGLE_PID=$!
+
 cleanup() {
-  kill "$AST_PID" "$UI_PID" "$WAKE_PID" 2>/dev/null || true
+  kill "$AST_PID" "$UI_PID" "$WAKE_PID" "$DONGLE_PID" 2>/dev/null || true
   if [ "$F2B_STARTED" = "1" ]; then
     fail2ban-client -s "$F2B_SOCKET" stop >/dev/null 2>&1 || true
   fi
