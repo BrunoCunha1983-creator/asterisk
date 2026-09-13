@@ -5,7 +5,35 @@ CONF=/config/asterisk
 IVR_AUDIO=/share/asterisk-ivr
 F2B_SOCKET=/run/fail2ban/fail2ban.sock
 F2B_PIDFILE=/run/fail2ban/fail2ban.pid
+WAKEUP_PROMPT=/var/lib/asterisk/sounds/ha/wakeup-pt.wav
 mkdir -p "$CONF" /config/state /share/asterisk-recordings "$IVR_AUDIO" /var/log/asterisk /var/spool/asterisk /var/run/asterisk /run/fail2ban /data/fail2ban
+
+# The wake-up prompt is built into the image, but verify it on every startup.
+# If the file is missing or has the wrong telephony format, recreate it locally.
+# This makes Serviço Despertar independent from external sound downloads.
+repair_wakeup_prompt() {
+  regenerate=0
+  [ -s "$WAKEUP_PROMPT" ] || regenerate=1
+  if [ "$regenerate" = "0" ]; then
+    rate="$(soxi -r "$WAKEUP_PROMPT" 2>/dev/null || true)"
+    channels="$(soxi -c "$WAKEUP_PROMPT" 2>/dev/null || true)"
+    bits="$(soxi -b "$WAKEUP_PROMPT" 2>/dev/null || true)"
+    [ "$rate" = "8000" ] || regenerate=1
+    [ "$channels" = "1" ] || regenerate=1
+    [ "$bits" = "16" ] || regenerate=1
+  fi
+  if [ "$regenerate" = "1" ]; then
+    echo "[Wakeup] repairing bundled PT-PT prompt"
+    mkdir -p "$(dirname "$WAKEUP_PROMPT")"
+    espeak-ng -v pt-pt -s 145 -w /tmp/wakeup-ha-src.wav \
+      "Bom dia. Esta e a sua chamada de despertar. Por favor, acorde."
+    sox /tmp/wakeup-ha-src.wav -r 8000 -c 1 -b 16 "$WAKEUP_PROMPT"
+    rm -f /tmp/wakeup-ha-src.wav
+  fi
+  test -s "$WAKEUP_PROMPT"
+  echo "[Wakeup] prompt ready: $(soxi -r "$WAKEUP_PROMPT") Hz, $(soxi -c "$WAKEUP_PROMPT") channel(s), $(soxi -b "$WAKEUP_PROMPT") bit"
+}
+repair_wakeup_prompt
 
 # Make custom Asterisk sounds persistent. Preserve any image-provided custom
 # sounds before replacing the custom directory with a symlink to /share.
