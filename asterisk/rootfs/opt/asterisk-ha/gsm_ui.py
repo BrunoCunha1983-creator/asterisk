@@ -93,9 +93,10 @@ async function gsm(a){
         <span class="pill">${locked?'PORTAS FIXAS':'TTY MANUAL'}</span>
       </div>
       <div class=sub>${esc(detail)}</div>
-      <div class=note><b>Ligação persistente:</b><br>Áudio: ${esc(gsmResolvedLabel(audio))}<br>Dados/AT: ${esc(gsmResolvedLabel(data))}</div>
+      <div class=note><b>Ligação persistente:</b><br>Áudio: ${esc(gsmResolvedLabel(audio))}<br>Dados/AT: ${esc(gsmResolvedLabel(data))}<br>Número associado: ${esc(d.phone_number||'— não definido —')}</div>
       <div class=row>
         <div><label>Nome</label><input id=dn${i} value="${esc(d.name)}"></div>
+        <div><label>Número associado (opcional)</label><input id=dnum${i} value="${esc(d.phone_number||'')}" placeholder="deixar em branco"></div>
         <div><label>Fixar portas por ID físico</label><select id=dl${i} onchange="gsm(E('#app'))"><option value=1 ${locked?'selected':''}>Sim — recomendado</option><option value=0 ${locked?'':'selected'}>Não — usar ttyUSBx</option></select></div>
         <div><label>Áudio</label><select id=da${i}>${gsmPortOptions(audio,locked)}</select></div>
         <div><label>Dados/AT</label><select id=dd${i}>${gsmPortOptions(data,locked)}</select></div>
@@ -107,19 +108,28 @@ async function gsm(a){
       <button class=btn onclick="delDongle(${i})">Remover configuração</button>
     </div>`;
   }).join('');
-  let profileRows=profiles.map((d,i)=>`<div class=item><b>${esc(d.name||('perfil'+i))}</b><div class=sub>Perfil guardado — sem hardware presente</div><div class=sub>Áudio: ${esc(d.audio||'—')} · Dados/AT: ${esc(d.data||'—')}</div><button class=btn onclick="delGsmProfile(${i})">Apagar perfil</button></div>`).join('');
+  let profileRows=profiles.map((d,i)=>`<div class=item><b>${esc(d.name||('perfil'+i))}</b><div class=sub>Perfil guardado — sem hardware presente</div><div class=sub>Número: ${esc(d.phone_number||'— não definido —')} · Áudio: ${esc(d.audio||'—')} · Dados/AT: ${esc(d.data||'—')}</div><button class=btn onclick="delGsmProfile(${i})">Apagar perfil</button></div>`).join('');
   let serialRows=serialPorts.map(p=>{
     let stable=gsmStablePath(p);
     return `<div class=item><b>${esc(p.device)}</b> <span class="pill">${p.accessible===false?'HAOS apenas':'acessível'}</span>${stable&&stable!==p.device?'<span class="pill">ID ESTÁVEL</span>':''}<div class=sub>${esc(p.id_vendor||'')} ${esc(p.id_model||'')} ${p.usb_id?'USB '+esc(p.usb_id):''} · origem: ${esc(p.source||'')}</div>${stable&&stable!==p.device?`<div class=sub><b>Fixar como:</b> ${esc(stable)}</div>`:''}${p.by_id&&p.by_id.length?`<div class=sub>${esc(p.by_id.join(' · '))}</div>`:''}${p.note?`<div class=sub>${esc(p.note)}</div>`:''}</div>`;
   }).join('')||'<div class=item>Nenhuma porta ttyUSB/ttyACM encontrada.</div>';
   let rawRows=rawUsb.map(p=>`<div class=item><b>${esc(p.usb_id||'USB')}</b> ${p.role_hint?`<span class=pill>${esc(p.role_hint)}</span>`:''}<div class=sub>${esc(p.description||'')}</div>${p.note?`<div class=sub>${esc(p.note)}</div>`:''}</div>`).join('')||'<div class=item>Nenhum dispositivo USB bruto visível no add-on.</div>';
   let huaweiWarn=huawei1505?'<div class=note><b>Huawei detetado como 12d1:1505.</b> O USB chegou à VM, mas está no modo inicial/storage e ainda pode não criar as portas tty do modem. Não faço mode-switch automático porque o PID muda e um passthrough Proxmox preso a 12d1:1505 pode perder o dispositivo após a mudança.</div>':'';
-  a.innerHTML=`<div class=grid><div class=card><div class=sub>Configurados ativos</div><div class=big>${h.gsm_dongles_configured||0}</div></div><div class=card><div class=sub>Presentes fisicamente</div><div class=big>${h.gsm_dongles_total||0}</div></div><div class=card><div class=sub>Ligados</div><div class=big>${h.gsm_dongles_connected||0}</div></div><div class=card><div class=sub>Portas série acessíveis</div><div class=big>${usablePorts.length}</div></div></div><div class=card><h2>chan_dongle / GSM</h2><div class=note><b>Novo:</b> com “Fixar portas por ID físico = Sim”, Áudio e Dados/AT são guardados em <code>/dev/serial/by-id/...</code>. O número <code>ttyUSBx</code> pode mudar sem trocar a interface da pen configurada.</div>${huaweiWarn}<div class=actions><button class=btn onclick="gsm(E('#app'))">Redetetar USB</button><button class=btn onclick="dongleShow()">Estado chan_dongle</button></div><h3>Portas série</h3>${serialRows}<details><summary>USB bruto visto pelo add-on (${rawUsb.length})</summary>${rawRows}</details><hr>${rows||'<div class=item>Nenhum modem GSM ativo/configurado.</div>'}<div class=actions><button class=btn onclick=addDongle()>+ Dongle</button><button class="btn primary" onclick=saveDongles()>Guardar e aplicar</button></div>${profiles.length?`<hr><h3>Perfis GSM guardados</h3>${profileRows}`:''}<hr><h3>SMS</h3><div class=row><input id=smsdev placeholder=dongle0><input id=smsnum placeholder="+351..."><input id=smstext placeholder="Mensagem"></div><button class=btn onclick=sendSMS()>Enviar SMS</button><h3>USSD</h3><div class=row><input id=ussddev placeholder=dongle0><input id=ussdcode placeholder="*#123#"></div><button class=btn onclick=sendUSSD()>Enviar USSD</button><pre id=gout></pre></div>`;
+  a.innerHTML=`<div class=grid><div class=card><div class=sub>Configurados ativos</div><div class=big>${h.gsm_dongles_configured||0}</div></div><div class=card><div class=sub>Presentes fisicamente</div><div class=big>${h.gsm_dongles_total||0}</div></div><div class=card><div class=sub>Ligados</div><div class=big>${h.gsm_dongles_connected||0}</div></div><div class=card><div class=sub>Portas série acessíveis</div><div class=big>${usablePorts.length}</div></div></div><div class=card><h2>chan_dongle / GSM</h2><div class=note><b>Perfis GSM:</b> o campo “Número associado” é opcional e meramente informativo. Na Huawei 4G pode ficar em branco até confirmares o número do SIM. Com “Fixar portas por ID físico = Sim”, Áudio e Dados/AT são guardados em <code>/dev/serial/by-id/...</code>.</div>${huaweiWarn}<div class=actions><button class=btn onclick="gsm(E('#app'))">Redetetar USB</button><button class=btn onclick="dongleShow()">Estado chan_dongle</button></div><h3>Portas série</h3>${serialRows}<details><summary>USB bruto visto pelo add-on (${rawUsb.length})</summary>${rawRows}</details><hr>${rows||'<div class=item>Nenhum modem GSM ativo/configurado.</div>'}<div class=actions><button class=btn onclick=addDongle()>+ Dongle</button><button class=btn onclick=addHuaweiDongle()>+ Huawei 4G</button><button class="btn primary" onclick=saveDongles()>Guardar e aplicar</button></div>${profiles.length?`<hr><h3>Perfis GSM guardados</h3>${profileRows}`:''}<hr><h3>SMS</h3><div class=row><input id=smsdev placeholder=dongle0><input id=smsnum placeholder="+351..."><input id=smstext placeholder="Mensagem"></div><button class=btn onclick=sendSMS()>Enviar SMS</button><h3>USSD</h3><div class=row><input id=ussddev placeholder=dongle0><input id=ussdcode placeholder="*#123#"></div><button class=btn onclick=sendUSSD()>Enviar USSD</button><pre id=gout></pre></div>`;
 }
 function addDongle(){
   let i=(pbx.gsm_dongles||[]).length;
   pbx.gsm_dongles=pbx.gsm_dongles||[];
-  pbx.gsm_dongles.push({name:'dongle'+i,audio:'',data:'',context:'from-dongle',group:0,rxgain:0,txgain:0,lock_ports:true});
+  pbx.gsm_dongles.push({name:'dongle'+i,phone_number:'',audio:'',data:'',context:'from-dongle',group:0,rxgain:0,txgain:0,lock_ports:true});
+  gsm(E('#app'));
+}
+function addHuaweiDongle(){
+  pbx.gsm_dongles=pbx.gsm_dongles||[];
+  let used=new Set(pbx.gsm_dongles.map(d=>String(d.name||'')));
+  let name='huawei4g';
+  let n=2;
+  while(used.has(name)){name='huawei4g'+n;n++;}
+  pbx.gsm_dongles.push({name:name,phone_number:'',audio:'',data:'',context:'from-dongle',group:0,rxgain:0,txgain:0,autodeletesms:true,disablesms:false,lock_ports:true});
   gsm(E('#app'));
 }
 async function saveDongles(){
@@ -127,6 +137,7 @@ async function saveDongles(){
     let locked=E('#dl'+i).value==='1';
     return {
       name:E('#dn'+i).value,
+      phone_number:E('#dnum'+i).value.trim(),
       audio:gsmCanonicalPort(E('#da'+i).value,locked),
       data:gsmCanonicalPort(E('#dd'+i).value,locked),
       context:E('#dc'+i).value,
