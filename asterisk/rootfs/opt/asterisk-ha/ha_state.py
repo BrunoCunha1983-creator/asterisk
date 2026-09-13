@@ -48,6 +48,32 @@ def parse_contacts(text):
     return contacts
 
 
+def registration_state(name, text):
+    """Return the registration status for one configured outbound PJSIP trunk."""
+    name = str(name or '').strip()
+    if not name:
+        return {'status': 'invalid', 'registered': False, 'raw': ''}
+    wanted = re.compile(r'^\s*' + re.escape(name) + r'(?:/|\s)', re.I)
+    states = (
+        'Registered', 'Unregistered', 'Rejected', 'Stopped', 'NoAuth',
+        'AuthSent', 'RequestSent', 'Retrying', 'Connecting', 'Unknown',
+    )
+    for raw in (text or '').splitlines():
+        if not wanted.search(raw):
+            continue
+        state = 'Unknown'
+        for candidate in states:
+            if re.search(r'\b' + re.escape(candidate) + r'\b', raw, re.I):
+                state = candidate
+                break
+        return {
+            'status': state,
+            'registered': state.lower() == 'registered',
+            'raw': raw.strip(),
+        }
+    return {'status': 'NotFound', 'registered': False, 'raw': ''}
+
+
 def parse_dongles(text):
     """Parse a useful subset of `dongle show devices` without relying on exact columns.
 
@@ -137,9 +163,6 @@ def build_gsm_devices(runtime_devices, configured_devices):
             'raw': runtime.get('raw'),
         })
 
-    # Preserve manually maintained dongle.conf setups. Only a runtime device
-    # that chan_dongle reports as connected is treated as physically present
-    # when it has no managed PBX entry to supply device-node paths.
     for name, runtime in runtime_by_name.items():
         if name in seen or not runtime.get('connected'):
             continue
@@ -196,11 +219,13 @@ def build_snapshot(ast, pbx_data):
     channels_r = ast('core show channels count')
     channels_concise_r = ast('core show channels concise')
     contacts_r = ast('pjsip show contacts')
+    registrations_r = ast('pjsip show registrations')
     dongle_r = ast('dongle show devices')
 
     version_text = (version_r.get('output') or '').strip()
     channels_text = channels_r.get('output') or ''
     contacts = parse_contacts(contacts_r.get('output') or '')
+    registrations_text = registrations_r.get('output') or ''
     runtime_dongles = parse_dongles(dongle_r.get('output') or '')
     configured_dongles = list(pbx_data.get('gsm_dongles') or [])
     dongles = build_gsm_devices(runtime_dongles, configured_dongles)
@@ -221,6 +246,30 @@ def build_snapshot(ast, pbx_data):
             'rtt_ms': c.get('rtt_ms') if c else None,
         })
 
+    sip_trunks = []
+    for trunk in (pbx_data.get('sip_trunks') or []):
+        if not isinstance(trunk, dict):
+            continue
+        name = str(trunk.get('name') or '').strip()
+        if not name:
+            continue
+        reg = registration_state(name, registrations_text)
+        contact = contacts.get(name)
+        sip_trunks.append({
+            'name': name,
+            'server': str(trunk.get('server') or ''),
+            'port': int(trunk.get('port', 5060) or 5060),
+            'username': str(trunk.get('username') or ''),
+            'prefix': str(trunk.get('prefix') or ''),
+            'registered': bool(reg.get('registered')),
+            'reachable': bool(reg.get('registered') or (contact and contact.get('reachable'))),
+            'registration_status': reg.get('status') or 'Unknown',
+            'contact_status': contact.get('status') if contact else 'unknown',
+            'contact': contact.get('uri') if contact else None,
+            'rtt_ms': contact.get('rtt_ms') if contact else None,
+            'registration_raw': reg.get('raw') or '',
+        })
+
     ht = pbx_data.get('ht503') or {}
     fxo_user = str(ht.get('fxo_user') or '').strip()
     fxs_extension = str(ht.get('fxs_extension') or '').strip()
@@ -230,8 +279,6 @@ def build_snapshot(ast, pbx_data):
     fxs['local_sip_port'] = int(ht.get('fxs_local_sip_port', 5062) or 5062)
     fxo['local_sip_port'] = int(ht.get('local_sip_port', 5064) or 5064)
 
-    # Keep the original top-level FXO fields for backwards compatibility while
-    # also exposing explicit nested FXS and FXO objects.
     ht503 = {
         'enabled': fxo['enabled'],
         'user': fxo_user,
@@ -279,6 +326,8 @@ def build_snapshot(ast, pbx_data):
         })
 
     registered = sum(1 for e in extensions if e['registered'])
+    trunks_registered = sum(1 for t in sip_trunks if t['registered'])
+    trunks_reachable = sum(1 for t in sip_trunks if t['reachable'])
     ivrs_enabled = sum(1 for i in ivrs if i['enabled'])
     ivr_active_channels = sum(i['active_channels'] for i in ivrs)
     gsm_configured = sum(1 for d in dongles if d.get('configured'))
@@ -301,9 +350,10 @@ def build_snapshot(ast, pbx_data):
         'ivr_active_channels': ivr_active_channels,
         'ivr_in_use': ivr_active_channels > 0,
         'ivrs': ivrs,
-        'sip_trunks_total': len(pbx_data.get('sip_trunks') or []),
-        # Backwards-compatible key: it now means physically present dongles,
-        # not merely rows returned by `dongle show devices`.
+        'sip_trunks_total': len(sip_trunks),
+        'sip_trunks_registered': trunks_registered,
+        'sip_trunks_reachable': trunks_reachable,
+        'sip_trunks': sip_trunks,
         'gsm_dongles_total': gsm_present,
         'gsm_dongles_configured': gsm_configured,
         'gsm_dongles_absent': max(0, gsm_configured - gsm_present),
