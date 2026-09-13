@@ -21,10 +21,17 @@ Home Assistant App/Add-on containing Asterisk 22.11.0 and an Ingress management 
 
 `chan_dongle` depends on the modem exposing serial interfaces usable for voice and AT commands. Many Huawei E-series devices require the correct USB mode/interface layout. The GUI exposes all `/dev/ttyUSB*` and `/dev/ttyACM*` interfaces so audio/data can be selected explicitly.
 
+## Huawei 4G / número do SIM
+
+A partir da versão **0.2.31**, cada perfil GSM pode guardar um **Número associado** (MSISDN) apenas como informação de identificação. O campo é opcional e, para o perfil **Huawei 4G**, fica vazio por defeito até o número real do SIM ser conhecido.
+
+O número associado **não é escrito no `dongle.conf` e não altera o encaminhamento de chamadas**. O `chan_dongle` continua a depender apenas da configuração técnica do modem (portas Áudio e Dados/AT, contexto, grupo e ganhos). A página **GSM / chan_dongle** inclui também o atalho **+ Huawei 4G**, que cria o perfil com o número vazio e com portas fixas por identidade física ativadas.
+
 ## First test
 
 1. Install/update the app and start it.
 2. Open **Asterisk PBX** from Ingress and confirm Dashboard reports Asterisk ONLINE.
 3. Add the PJSIP extensions used by your phones and save/apply.
-4. For GSM, connect the modem, open **GSM / chan_dongle**, inspect the detected USB serial interfaces and create `dongle0`.
-5. In **Diagnóstico**, confirm `chan_dongle.so` is loaded and inspect `dongle show devices`.
+4. For GSM, connect the modem, open **GSM / chan_dongle**, inspect the detected USB serial interfaces and create `dongle0` or use **+ Huawei 4G**.
+5. Leave **Número associado** blank if the SIM number is not yet known, select the correct Audio and Data/AT ports, then save/apply.
+6. In **Diagnóstico**, confirm `chan_dongle.so` is loaded and inspect `dongle show devices`.
