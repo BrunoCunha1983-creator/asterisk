@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 from pathlib import Path
+import math
 import re
 import time
 
@@ -11,7 +12,8 @@ def _int(pattern, text, default=0):
 
 def _float(value):
     try:
-        return float(value)
+        number = float(value)
+        return number if math.isfinite(number) else None
     except Exception:
         return None
 
