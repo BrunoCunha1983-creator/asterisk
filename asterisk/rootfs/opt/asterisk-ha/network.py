@@ -8,15 +8,6 @@ from pathlib import Path
 
 
 NAT_STATUS = Path('/config/state/nat.json')
-# 0.2.32 temporarily injected these broad networks while automatic LAN
-# detection was enabled. They are kept here only so 0.2.34 can remove the
-# persisted values safely and return to interface-based local_net detection.
-LEGACY_AUTO_PRIVATE_NETS = {
-    '10.0.0.0/8',
-    '172.16.0.0/12',
-    '192.168.0.0/16',
-    '100.64.0.0/10',
-}
 DEFAULT_NETWORK = {
     'external_address': '',
     'auto_external': True,
@@ -38,7 +29,7 @@ def _clamp_int(value, default, low, high):
 
 
 def detect_local_networks():
-    """Return private IPv4 networks actually assigned to the host."""
+    """Return private IPv4 networks assigned to the host."""
     found = []
     try:
         p = subprocess.run(
@@ -73,7 +64,7 @@ def detect_public_address():
     )
     for url in urls:
         try:
-            req = urllib.request.Request(url, headers={'User-Agent': 'Asterisk-HA/0.2.34'})
+            req = urllib.request.Request(url, headers={'User-Agent': 'Asterisk-HA/0.2.6'})
             with urllib.request.urlopen(req, timeout=4) as r:
                 value = r.read(128).decode('ascii', 'ignore').strip()
             ip = ipaddress.ip_address(value)
@@ -151,24 +142,11 @@ def ensure_network_state(data):
 
     net['auto_local_nets'] = bool(net.get('auto_local_nets', True))
     net['local_nets'] = _normalise_nets(net.get('local_nets'))
-    if net['auto_local_nets']:
+    if net['auto_local_nets'] and not net['local_nets']:
         detected = detect_local_networks()
-
-        # Recovery from 0.2.32/0.2.33: remove only the exact broad networks that
-        # that release injected automatically. Keep an exact match if it really
-        # is assigned to the host, and preserve all specific/manual networks.
-        cleaned = [
-            value for value in net['local_nets']
-            if value not in LEGACY_AUTO_PRIVATE_NETS or value in detected
-        ]
-        if cleaned != net['local_nets']:
-            net['local_nets'] = cleaned
-            changed = True
-
-        if not net['local_nets'] and detected:
+        if detected:
             net['local_nets'] = detected
             changed = True
-
     net['rtp_keepalive'] = _clamp_int(net.get('rtp_keepalive'), 15, 0, 120)
     net['rtp_timeout'] = _clamp_int(net.get('rtp_timeout'), 30, 0, 600)
     net['rtp_timeout_hold'] = _clamp_int(net.get('rtp_timeout_hold'), 300, 0, 1800)
@@ -263,7 +241,7 @@ async function networkPage(a){
   let n=pbx.network||{};
   let nets=Array.isArray(n.local_nets)?n.local_nets.join('\n'):String(n.local_nets||'');
   a.innerHTML=`<div class=card><h2>Rede / NAT / RTP</h2>
-  <div class=note><b>Para extensões fora da LAN:</b> o Asterisk tem de anunciar o endereço público no SDP e o router tem de encaminhar SIP e a gama RTP para este Home Assistant. Em modo automático são usadas apenas as redes realmente atribuídas ao host; redes privadas roteadas adicionais podem ser configuradas manualmente.</div>
+  <div class=note><b>Para extensões fora da LAN:</b> o Asterisk tem de anunciar o endereço público no SDP e o router tem de encaminhar SIP e a gama RTP para este Home Assistant. O timeout RTP também termina chamadas remotas que desapareçam sem enviar BYE.</div>
   <div class=row>
     <div><label>IP público automático</label><select id=netextauto><option value=1 ${n.auto_external!==false?'selected':''}>Sim</option><option value=0 ${n.auto_external===false?'selected':''}>Não</option></select></div>
     <div><label>Endereço público / DDNS</label><input id=netext value="${esc(n.external_address||'')}" placeholder="pbx.exemplo.pt ou IP público"></div>
