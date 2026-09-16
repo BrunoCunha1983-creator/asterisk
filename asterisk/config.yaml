@@ -52,9 +52,9 @@ schema:
   timezone: str
   sip_port: port
   tls_port: port
-  ami_port: 5038
-  ari_port: 8088
-  webrtc_wss_port: 8089
+  ami_port: port
+  ari_port: port
+  webrtc_wss_port: port
   rtp_start: int(1024,65535)
   rtp_end: int(1024,65535)
   nat_auto: bool
