@@ -2,17 +2,22 @@
 import ipaddress
 import json
 import re
+import socket
 import subprocess
 import time
+import urllib.request
 from pathlib import Path
 
 PBX = Path('/config/state/pbx.json')
+NAT_STATUS = Path('/config/state/nat.json')
+OPTIONS = Path('/data/options.json')
 STATE = Path('/data/fail2ban/dynamic-ignoreips.json')
 STATUS = Path('/data/fail2ban/dynamic-whitelist-status.json')
 ASTERISK_LOG = Path('/var/log/asterisk/full')
 F2B_SOCKET = '/run/fail2ban/fail2ban.sock'
 ASTERISK_CONF = '/config/asterisk/asterisk.conf'
-JAIL = 'asterisk-pjsip'
+PJSIP_JAIL = 'asterisk-pjsip'
+WEB_JAIL = 'asterisk-web'
 POLL_SECONDS = 60
 LOG_LOOKBACK_BYTES = 2 * 1024 * 1024
 
@@ -45,15 +50,66 @@ def public_ip(value):
         ip = ipaddress.ip_address(str(value).strip())
     except Exception:
         return None
-    if ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_multicast or ip.is_unspecified:
+    # Only globally routable addresses are useful as an external HA/PBX IP or
+    # as a public remote endpoint address. Private, CGNAT and documentation
+    # ranges must never be learned as public Fail2ban exceptions here.
+    if not ip.is_global:
         return None
     return str(ip)
 
 
+def resolve_public(value):
+    value = str(value or '').strip()
+    value = re.sub(r'^https?://', '', value, flags=re.I).split('/')[0].strip()
+    if not value:
+        return None
+    literal = public_ip(value)
+    if literal:
+        return literal
+    host = value
+    if host.startswith('[') and ']' in host:
+        host = host[1:host.index(']')]
+    elif host.count(':') == 1:
+        host = host.rsplit(':', 1)[0]
+    try:
+        for info in socket.getaddrinfo(host, None, type=socket.SOCK_STREAM):
+            ip = public_ip(info[4][0])
+            if ip:
+                return ip
+    except Exception:
+        pass
+    return None
+
+
+def detect_ha_public_ip():
+    # Prefer the address already detected by the add-on NAT layer so Fail2ban
+    # trusts exactly the public address the PBX is advertising.
+    nat = load_json(NAT_STATUS, {})
+    ip = resolve_public(nat.get('external_address'))
+    if ip:
+        return ip, 'nat.json'
+
+    pbx = load_json(PBX, {})
+    network = pbx.get('network') or {}
+    if isinstance(network, dict):
+        ip = resolve_public(network.get('external_address'))
+        if ip:
+            return ip, 'pbx.network.external_address'
+
+    for url in ('https://api.ipify.org', 'https://checkip.amazonaws.com'):
+        try:
+            req = urllib.request.Request(url, headers={'User-Agent': 'Asterisk-HA/0.2.39'})
+            with urllib.request.urlopen(req, timeout=4) as response:
+                ip = public_ip(response.read(128).decode('ascii', 'ignore').strip())
+            if ip:
+                return ip, url
+        except Exception:
+            continue
+    return None, 'unavailable'
+
+
 def extract_public_ips(text):
     out = set()
-    # IPv4 plus ordinary textual IPv6 candidates. Validation is delegated to
-    # ipaddress so Fail2ban decorations/labels are harmless.
     candidates = re.findall(r'(?<![0-9A-Fa-f:.])(?:\d{1,3}\.){3}\d{1,3}(?:/\d{1,2})?(?![0-9A-Fa-f:.])', text or '')
     candidates += re.findall(r'(?<![0-9A-Fa-f:])(?:[0-9A-Fa-f]{1,4}:){2,7}[0-9A-Fa-f]{0,4}(?:/\d{1,3})?(?![0-9A-Fa-f:])', text or '')
     for candidate in candidates:
@@ -126,9 +182,6 @@ def successful_log_ips(extensions):
     matches = []
     for raw in text.splitlines():
         low = raw.lower()
-        # Only learn from success evidence, never from Failed to authenticate or
-        # No matching endpoint messages. This keeps the auto-whitelist from
-        # trusting a scanner merely because it guessed an extension number.
         if not any(token in low for token in ('successfulauth', 'added contact', 'created contact', 'registered')):
             continue
         ext = next((e for e in extensions if re.search(r'(?<!\d)' + re.escape(e) + r'(?!\d)', raw)), None)
@@ -145,101 +198,167 @@ def f2b(*args):
     return run(['fail2ban-client', '-s', F2B_SOCKET, *args])
 
 
-def runtime_ignore_ips():
-    ok, text = f2b('get', JAIL, 'ignoreip')
+def runtime_ignore_ips(jail):
+    ok, text = f2b('get', jail, 'ignoreip')
     return extract_public_ips(text) if ok else set(), text.strip()
 
 
-def banned_ips():
-    ok, text = f2b('status', JAIL)
+def banned_ips(jail):
+    ok, text = f2b('status', jail)
     if not ok:
         return set()
     m = re.search(r'Banned IP list:\s*(.*)$', text, re.I | re.M)
     return extract_public_ips(m.group(1) if m else '')
 
 
-def apply_ignore(ip):
-    # Remove an existing ban first. addignoreip does not reliably make an
-    # already-banned address usable on every Fail2ban/action combination.
-    f2b('set', JAIL, 'unbanip', ip)
-    ok, output = f2b('set', JAIL, 'addignoreip', ip)
-    runtime, runtime_raw = runtime_ignore_ips()
+def apply_ignore(jail, ip):
+    f2b('set', jail, 'unbanip', ip)
+    ok, output = f2b('set', jail, 'addignoreip', ip)
+    runtime, runtime_raw = runtime_ignore_ips(jail)
     verified = ip in runtime
     return verified, output.strip(), runtime_raw
 
 
-def sync_once(previous):
+def static_ignore_contains(ip):
+    if not ip:
+        return False
+    options = load_json(OPTIONS, {})
+    raw = str(options.get('fail2ban_ignoreip') or '').replace(',', ' ').split()
+    try:
+        addr = ipaddress.ip_address(ip)
+    except Exception:
+        return False
+    for item in raw:
+        try:
+            if addr in ipaddress.ip_network(item, strict=False):
+                return True
+        except Exception:
+            continue
+    return False
+
+
+def sync_ha_public_ip(ha_ip, previous_ha_ip, errors):
+    verified = {}
+    added = []
+    banned_before = {}
+    for jail in (PJSIP_JAIL, WEB_JAIL):
+        runtime, _ = runtime_ignore_ips(jail)
+        banned_before[jail] = sorted(banned_ips(jail))
+        if ha_ip and ha_ip not in runtime:
+            ok, output, verify_raw = apply_ignore(jail, ha_ip)
+            verified[jail] = bool(ok)
+            if ok:
+                added.append({'jail': jail, 'ip': ha_ip})
+                print(f'[SECURITY] Fail2ban HA public-IP whitelist: verified {ha_ip} in {jail}', flush=True)
+            else:
+                errors.append({'jail': jail, 'ip': ha_ip, 'ha_public_ip_error': output, 'runtime_ignoreip': verify_raw})
+        else:
+            verified[jail] = bool(ha_ip and ha_ip in runtime)
+
+    # Remove the previous dynamically-managed HA public address after a change,
+    # unless the user explicitly placed that address/network in static ignoreip.
+    if previous_ha_ip and ha_ip and previous_ha_ip != ha_ip and not static_ignore_contains(previous_ha_ip):
+        for jail in (PJSIP_JAIL, WEB_JAIL):
+            # In PJSIP keep it if it is still a currently trusted remote endpoint;
+            # the remote-IP sync below will manage that case independently.
+            f2b('set', jail, 'delignoreip', previous_ha_ip)
+            print(f'[SECURITY] Fail2ban HA public-IP whitelist: removed stale {previous_ha_ip} from {jail}', flush=True)
+
+    return verified, added, banned_before
+
+
+def sync_once(previous_remote, previous_ha_ip):
     extensions = configured_extensions()
     contact_ips, contact_diag = contact_remote_ips(extensions)
     log_ips, log_diag = successful_log_ips(extensions)
-    current = contact_ips | log_ips
-    runtime, runtime_raw = runtime_ignore_ips()
-    before_banned = banned_ips()
+    current_remote = contact_ips | log_ips
+    runtime_pjsip, runtime_pjsip_raw = runtime_ignore_ips(PJSIP_JAIL)
+    before_banned_pjsip = banned_ips(PJSIP_JAIL)
     errors = []
-    added = []
+    added_remote = []
 
-    # Persistently known, previously authenticated addresses are also reapplied
-    # after a Fail2ban restart. This closes the race where the firewall comes up
-    # before the endpoint has had a chance to refresh its registration.
-    desired = current | previous
-    for ip in sorted(desired - runtime):
-        verified, output, verify_raw = apply_ignore(ip)
+    desired_remote = current_remote | previous_remote
+    for ip in sorted(desired_remote - runtime_pjsip):
+        verified, output, verify_raw = apply_ignore(PJSIP_JAIL, ip)
         if verified:
-            added.append(ip)
+            added_remote.append(ip)
             print(f'[SECURITY] Fail2ban auto-whitelist: verified remote extension IP {ip}', flush=True)
         else:
-            errors.append({'ip': ip, 'output': output, 'runtime_ignoreip': verify_raw})
+            errors.append({'jail': PJSIP_JAIL, 'ip': ip, 'output': output, 'runtime_ignoreip': verify_raw})
             print(f'[SECURITY] Fail2ban auto-whitelist: FAILED verification for {ip}: {output}', flush=True)
 
-    runtime_after, runtime_after_raw = runtime_ignore_ips()
+    runtime_pjsip_after, runtime_pjsip_after_raw = runtime_ignore_ips(PJSIP_JAIL)
 
-    # Only remove stale dynamic addresses when a different/current successful
-    # address exists. If the endpoint is temporarily offline, keep its last
-    # authenticated public IP so a normal re-registration is not blocked.
-    if current:
-        for ip in sorted(previous - current):
-            if ip in runtime_after:
-                ok, out = f2b('set', JAIL, 'delignoreip', ip)
+    if current_remote:
+        for ip in sorted(previous_remote - current_remote):
+            if ip in runtime_pjsip_after and not static_ignore_contains(ip):
+                ok, out = f2b('set', PJSIP_JAIL, 'delignoreip', ip)
                 if ok:
                     print(f'[SECURITY] Fail2ban auto-whitelist: removed stale remote extension IP {ip}', flush=True)
                 elif out.strip():
-                    errors.append({'ip': ip, 'remove_error': out.strip()})
-        persisted = current
+                    errors.append({'jail': PJSIP_JAIL, 'ip': ip, 'remove_error': out.strip()})
+        persisted_remote = current_remote
     else:
-        persisted = previous
+        persisted_remote = previous_remote
 
-    write_json(STATE, {'ips': sorted(persisted), 'updated_at': int(time.time())})
+    ha_ip, ha_source = detect_ha_public_ip()
+    ha_verified, ha_added, ha_banned_before = sync_ha_public_ip(ha_ip, previous_ha_ip, errors)
+
+    runtime_by_jail = {}
+    runtime_raw_by_jail = {}
+    for jail in (PJSIP_JAIL, WEB_JAIL):
+        ips, raw = runtime_ignore_ips(jail)
+        runtime_by_jail[jail] = sorted(ips)
+        runtime_raw_by_jail[jail] = raw[-8000:]
+
+    write_json(STATE, {
+        'ips': sorted(persisted_remote),
+        'remote_ips': sorted(persisted_remote),
+        'ha_public_ip': ha_ip or previous_ha_ip,
+        'ha_public_ip_source': ha_source,
+        'updated_at': int(time.time()),
+    })
     write_json(STATUS, {
         'updated_at': int(time.time()),
-        'jail': JAIL,
+        'jail': PJSIP_JAIL,
         'configured_extensions': sorted(extensions),
         'contact_ips': sorted(contact_ips),
         'successful_log_ips': sorted(log_ips),
-        'desired_dynamic_ips': sorted(desired),
-        'runtime_ignore_ips': sorted(runtime_after),
-        'banned_before_sync': sorted(before_banned),
-        'added_verified': added,
+        'desired_dynamic_ips': sorted(desired_remote),
+        'runtime_ignore_ips': runtime_by_jail.get(PJSIP_JAIL, []),
+        'runtime_ignore_by_jail': runtime_by_jail,
+        'banned_before_sync': sorted(before_banned_pjsip),
+        'added_verified': added_remote,
+        'ha_public_ip': ha_ip,
+        'ha_public_ip_source': ha_source,
+        'ha_public_ip_previous': previous_ha_ip,
+        'ha_public_ip_verified': ha_verified,
+        'ha_public_ip_added': ha_added,
+        'ha_banned_before_sync': ha_banned_before,
         'errors': errors,
         'contact_diagnostics': contact_diag,
         'successful_log_matches': log_diag,
-        'runtime_ignore_raw': runtime_after_raw[-8000:],
+        'runtime_ignore_raw': runtime_pjsip_after_raw[-8000:],
+        'runtime_ignore_raw_by_jail': runtime_raw_by_jail,
     })
-    return persisted
+    return persisted_remote, (ha_ip or previous_ha_ip)
 
 
 def main():
-    previous = set(load_json(STATE, {}).get('ips') or [])
-    print('[SECURITY] Fail2ban dynamic remote-IP whitelist watcher started', flush=True)
+    state = load_json(STATE, {})
+    previous_remote = set(state.get('remote_ips') or state.get('ips') or [])
+    previous_ha_ip = public_ip(state.get('ha_public_ip'))
+    print('[SECURITY] Fail2ban dynamic whitelist watcher started', flush=True)
     while True:
         ok, ping = f2b('ping')
         if ok:
             try:
-                previous = sync_once(previous)
+                previous_remote, previous_ha_ip = sync_once(previous_remote, previous_ha_ip)
             except Exception as exc:
-                write_json(STATUS, {'updated_at': int(time.time()), 'jail': JAIL, 'error': str(exc)})
-                print(f'[SECURITY] Fail2ban auto-whitelist watcher error: {exc}', flush=True)
+                write_json(STATUS, {'updated_at': int(time.time()), 'jail': PJSIP_JAIL, 'error': str(exc)})
+                print(f'[SECURITY] Fail2ban dynamic whitelist watcher error: {exc}', flush=True)
         else:
-            write_json(STATUS, {'updated_at': int(time.time()), 'jail': JAIL, 'error': ping.strip() or 'Fail2ban offline'})
+            write_json(STATUS, {'updated_at': int(time.time()), 'jail': PJSIP_JAIL, 'error': ping.strip() or 'Fail2ban offline'})
         time.sleep(POLL_SECONDS)
 
 
