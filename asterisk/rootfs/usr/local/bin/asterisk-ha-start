@@ -106,6 +106,24 @@ if [ "$F2B_ENABLED" = "1" ]; then
 
   if [ "$F2B_STARTED" = "1" ]; then
     echo "[SECURITY] Fail2ban ativo: asterisk-pjsip + asterisk-web"
+
+    # One-time recovery for 0.2.36. During the previous PBX registration outage,
+    # legitimate remote SIP clients could accumulate persistent bans in the
+    # asterisk-pjsip jail. Clear only that jail once, keep asterisk-web bans and
+    # leave Fail2ban enabled normally afterwards.
+    F2B_RECOVERY_MARKER=/data/fail2ban/recovery-0.2.36-pjsip-unban.done
+    if [ ! -e "$F2B_RECOVERY_MARKER" ]; then
+      BANNED_IPS="$(fail2ban-client -s "$F2B_SOCKET" status asterisk-pjsip 2>/dev/null | sed -n 's/^.*Banned IP list:[[:space:]]*//p' || true)"
+      if [ -n "$BANNED_IPS" ]; then
+        echo "[SECURITY] Recuperação 0.2.36: a remover bans PJSIP herdados: $BANNED_IPS"
+        for ip in $BANNED_IPS; do
+          fail2ban-client -s "$F2B_SOCKET" set asterisk-pjsip unbanip "$ip" >/dev/null 2>&1 || true
+        done
+      else
+        echo "[SECURITY] Recuperação 0.2.36: sem bans PJSIP ativos para remover"
+      fi
+      touch "$F2B_RECOVERY_MARKER"
+    fi
   else
     echo "[SECURITY] AVISO: Fail2ban não arrancou; PBX continua disponível."
     echo "[SECURITY] Ver /data/fail2ban/config-test.log e /data/fail2ban/server.log"
