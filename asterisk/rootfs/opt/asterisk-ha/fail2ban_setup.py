@@ -1,20 +1,31 @@
 #!/usr/bin/env python3
+import ipaddress
 import json
 import re
+import socket
+import time
+import urllib.request
 from pathlib import Path
 
 OPTIONS = Path('/data/options.json')
 F2B_DIR = Path('/etc/fail2ban')
 DATA_DIR = Path('/data/fail2ban')
 ASTERISK_LOG = Path('/var/log/asterisk/full')
+NAT_STATUS = Path('/config/state/nat.json')
+PBX = Path('/config/state/pbx.json')
+SELF_STATE = DATA_DIR / 'self-public-ip.json'
+
+
+def _load_json(path, default=None):
+    try:
+        value = json.loads(Path(path).read_text())
+        return value if isinstance(value, dict) else ({} if default is None else default)
+    except Exception:
+        return {} if default is None else default
 
 
 def _load_options(path=OPTIONS):
-    try:
-        value = json.loads(Path(path).read_text())
-        return value if isinstance(value, dict) else {}
-    except Exception:
-        return {}
+    return _load_json(path, {})
 
 
 def _bounded(value, default, low, high):
@@ -25,7 +36,83 @@ def _bounded(value, default, low, high):
     return max(low, min(high, value))
 
 
-def _ignoreip(value):
+def _public_ip(value):
+    try:
+        ip = ipaddress.ip_address(str(value or '').strip())
+    except Exception:
+        return None
+    return str(ip) if ip.is_global else None
+
+
+def _resolve_public(value):
+    value = str(value or '').strip()
+    value = re.sub(r'^https?://', '', value, flags=re.I).split('/')[0].strip()
+    if not value:
+        return None
+    literal = _public_ip(value)
+    if literal:
+        return literal
+    host = value
+    if host.startswith('[') and ']' in host:
+        host = host[1:host.index(']')]
+    elif host.count(':') == 1:
+        host = host.rsplit(':', 1)[0]
+    try:
+        for info in socket.getaddrinfo(host, None, type=socket.SOCK_STREAM):
+            ip = _public_ip(info[4][0])
+            if ip:
+                return ip
+    except Exception:
+        pass
+    return None
+
+
+def _save_self_ip(ip, source):
+    if not ip:
+        return
+    try:
+        SELF_STATE.parent.mkdir(parents=True, exist_ok=True)
+        SELF_STATE.write_text(json.dumps({
+            'ip': ip,
+            'source': source,
+            'updated_at': int(time.time()),
+        }, indent=2))
+    except Exception:
+        pass
+
+
+def _detect_self_public_ip():
+    # Fresh scan first. This is deliberate: nat.json may contain yesterday's WAN
+    # address after an ISP reconnect, and Fail2ban must start with today's IP.
+    for url in ('https://api.ipify.org', 'https://checkip.amazonaws.com'):
+        try:
+            req = urllib.request.Request(url, headers={'User-Agent': 'Asterisk-HA/0.2.40'})
+            with urllib.request.urlopen(req, timeout=3) as response:
+                ip = _public_ip(response.read(128).decode('ascii', 'ignore').strip())
+            if ip:
+                _save_self_ip(ip, url)
+                return ip, url
+        except Exception:
+            continue
+
+    nat = _load_json(NAT_STATUS, {})
+    ip = _resolve_public(nat.get('external_address'))
+    if ip:
+        _save_self_ip(ip, 'nat.json')
+        return ip, 'nat.json'
+
+    pbx = _load_json(PBX, {})
+    network = pbx.get('network') or {}
+    if isinstance(network, dict):
+        ip = _resolve_public(network.get('external_address'))
+        if ip:
+            _save_self_ip(ip, 'pbx.network.external_address')
+            return ip, 'pbx.network.external_address'
+
+    return None, 'unavailable'
+
+
+def _ignoreip(value, self_public_ip=None):
     raw = str(value or '').replace(',', ' ').split()
     safe = []
     for item in raw:
@@ -35,6 +122,8 @@ def _ignoreip(value):
     for item in defaults:
         if item not in safe:
             safe.append(item)
+    if self_public_ip and self_public_ip not in safe:
+        safe.append(self_public_ip)
     return ' '.join(safe)
 
 
@@ -54,7 +143,8 @@ def render(options=None, root=F2B_DIR, data_dir=DATA_DIR, asterisk_log=ASTERISK_
     web_maxretry = _bounded(options.get('fail2ban_web_maxretry'), 10, 2, 100)
     sip_port = _bounded(options.get('sip_port'), 5060, 1, 65535)
     tls_port = _bounded(options.get('tls_port'), 5061, 1, 65535)
-    ignoreip = _ignoreip(options.get('fail2ban_ignoreip'))
+    self_public_ip, self_public_ip_source = _detect_self_public_ip()
+    ignoreip = _ignoreip(options.get('fail2ban_ignoreip'), self_public_ip)
 
     for path in (asterisk_log, data_dir / 'pbx-web-security.log'):
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -94,6 +184,11 @@ ignoreregex =
 
     jail = f'''[DEFAULT]
 ignoreip = {ignoreip}
+# Local interface self-detection alone does not know the router's public NAT
+# address, so protect it in two layers: startup ignoreip above and a final live
+# public-IP check immediately before any prospective ban.
+ignoreself = true
+ignorecommand = python3 /opt/asterisk-ha/fail2ban_ignore_self.py "<ip>"
 backend = polling
 usedns = no
 bantime = {bantime}
@@ -132,6 +227,9 @@ action = nftables-multiport[name=asterisk-web, port="8099", protocol=tcp]
         'maxretry': maxretry,
         'web_maxretry': web_maxretry,
         'ignoreip': ignoreip,
+        'self_public_ip': self_public_ip,
+        'self_public_ip_source': self_public_ip_source,
+        'ignorecommand': 'python3 /opt/asterisk-ha/fail2ban_ignore_self.py <ip>',
         'sip_port': sip_port,
         'tls_port': tls_port,
         'jail_file': str(jail_file),
