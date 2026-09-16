@@ -75,6 +75,7 @@ python3 "$APP/wakeup_dialplan.py"
 # foreground/supervised invocation below.
 F2B_STARTED=0
 F2B_PID=""
+F2B_WATCH_PID=""
 F2B_ENABLED="$(python3 - <<'PY'
 import json
 try:
@@ -153,6 +154,15 @@ VFLAGS="$(python3 -c 'import sys; n=max(0,min(9,int(sys.argv[1]))); print("-"+"v
 asterisk -f -C "$CONF/asterisk.conf" -U root -G root $VFLAGS &
 AST_PID=$!
 
+# Keep Fail2ban in sync with the changing public IP of successfully authenticated
+# remote extensions. This only changes the runtime asterisk-pjsip ignore list;
+# it does not rewrite endpoint, trunk, SIPcord or GSM configuration.
+if [ "$F2B_STARTED" = "1" ]; then
+  : > /data/fail2ban/dynamic-whitelist.log
+  python3 "$APP/fail2ban_dynamic_whitelist.py" >>/data/fail2ban/dynamic-whitelist.log 2>&1 &
+  F2B_WATCH_PID=$!
+fi
+
 # Persistent Asterisk wake-up service. Asterisk rings the selected PJSIP
 # extension; this lightweight process only handles scheduling and originate.
 python3 "$APP/wakeup_scheduler.py" &
@@ -166,6 +176,7 @@ DONGLE_PID=$!
 
 cleanup() {
   kill "$AST_PID" "$UI_PID" "$WAKE_PID" "$DONGLE_PID" 2>/dev/null || true
+  if [ -n "$F2B_WATCH_PID" ]; then kill "$F2B_WATCH_PID" 2>/dev/null || true; fi
   if [ "$F2B_STARTED" = "1" ]; then
     fail2ban-client -s "$F2B_SOCKET" stop >/dev/null 2>&1 || true
   fi
