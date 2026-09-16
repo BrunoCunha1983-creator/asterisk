@@ -24,8 +24,7 @@ def run(args, timeout=8):
 
 def load_json(path, default):
     try:
-        value = json.loads(Path(path).read_text())
-        return value
+        return json.loads(Path(path).read_text())
     except Exception:
         return default
 
@@ -96,12 +95,25 @@ def f2b(*args):
     return run(['fail2ban-client', '-s', F2B_SOCKET, *args])
 
 
+def runtime_ignore_ips():
+    ok, text = f2b('get', JAIL, 'ignoreip')
+    if not ok:
+        return set()
+    out = set()
+    for token in re.split(r'[\s,]+', text):
+        ip = public_ip(token.strip('[]()'))
+        if ip:
+            out.add(ip)
+    return out
+
+
 def sync_once(previous):
     current = active_remote_extension_ips()
+    runtime = runtime_ignore_ips()
 
-    for ip in sorted(current - previous):
-        # A newly learned legitimate endpoint may still carry an old ban from a
-        # previous public address/authentication incident. Unban before ignoring.
+    # Reapply current dynamic addresses after any Fail2ban restart, even if the
+    # persisted watcher state already knows them.
+    for ip in sorted(current - runtime):
         f2b('set', JAIL, 'unbanip', ip)
         ok, out = f2b('set', JAIL, 'addignoreip', ip)
         if ok:
@@ -109,14 +121,12 @@ def sync_once(previous):
         else:
             print(f'[SECURITY] Fail2ban auto-whitelist: failed to add {ip}: {out.strip()}', flush=True)
 
+    # Remove only addresses that this watcher previously managed and that are no
+    # longer attached to a configured extension. Static ignoreip entries remain.
     for ip in sorted(previous - current):
-        ok, out = f2b('set', JAIL, 'delignoreip', ip)
+        ok, _ = f2b('set', JAIL, 'delignoreip', ip)
         if ok:
             print(f'[SECURITY] Fail2ban auto-whitelist: removed stale remote extension IP {ip}', flush=True)
-        else:
-            # If Fail2ban restarted, its runtime ignore list may no longer contain
-            # the previous address. That is harmless; still drop it from our state.
-            print(f'[SECURITY] Fail2ban auto-whitelist: stale IP {ip} no longer active', flush=True)
 
     save_state(current)
     return current
