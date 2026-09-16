@@ -108,6 +108,26 @@ if [ "$F2B_ENABLED" = "1" ]; then
   if [ "$F2B_STARTED" = "1" ]; then
     echo "[SECURITY] Fail2ban ativo: asterisk-pjsip + asterisk-web"
 
+    # The setup phase performs a fresh external-IP scan before Fail2ban starts.
+    # If a persistent database restored an old ban for that very address, remove
+    # it now and force the current HA/PBX WAN IP into both runtime ignore lists.
+    HA_PUBLIC_IP="$(python3 - <<'PY'
+import json
+try:
+    value=json.load(open('/data/fail2ban/self-public-ip.json'))
+    print(str(value.get('ip') or '').strip())
+except Exception:
+    print('')
+PY
+)"
+    if [ -n "$HA_PUBLIC_IP" ]; then
+      for jail in asterisk-pjsip asterisk-web; do
+        fail2ban-client -s "$F2B_SOCKET" set "$jail" unbanip "$HA_PUBLIC_IP" >/dev/null 2>&1 || true
+        fail2ban-client -s "$F2B_SOCKET" set "$jail" addignoreip "$HA_PUBLIC_IP" >/dev/null 2>&1 || true
+      done
+      echo "[SECURITY] IP público HA/PBX protegido contra blacklist: $HA_PUBLIC_IP"
+    fi
+
     # One-time recovery for 0.2.36. During the previous PBX registration outage,
     # legitimate remote SIP clients could accumulate persistent bans in the
     # asterisk-pjsip jail. Clear only that jail once, keep asterisk-web bans and
@@ -154,9 +174,9 @@ VFLAGS="$(python3 -c 'import sys; n=max(0,min(9,int(sys.argv[1]))); print("-"+"v
 asterisk -f -C "$CONF/asterisk.conf" -U root -G root $VFLAGS &
 AST_PID=$!
 
-# Keep Fail2ban in sync with the changing public IP of successfully authenticated
-# remote extensions. This only changes the runtime asterisk-pjsip ignore list;
-# it does not rewrite endpoint, trunk, SIPcord or GSM configuration.
+# Keep Fail2ban in sync with the changing public IP of the HA/PBX itself and
+# successfully authenticated remote extensions. This changes only Fail2ban
+# runtime ignore lists; it does not rewrite endpoint/trunk/SIPcord/GSM config.
 if [ "$F2B_STARTED" = "1" ]; then
   : > /data/fail2ban/dynamic-whitelist.log
   python3 "$APP/fail2ban_dynamic_whitelist.py" >>/data/fail2ban/dynamic-whitelist.log 2>&1 &
