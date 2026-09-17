@@ -55,7 +55,7 @@ async function sim800c(a){
     <div class=actions><button class="btn primary" onclick=saveSIM800C()>Guardar</button><button class=btn onclick="sim800cAction('init')">Inicializar modem</button><button class=btn onclick="sim800cAction('refresh')">Atualizar estado</button></div>
     <h3>Chamadas GSM — controlo</h3><div class=row><div><label>Número</label><input id=s8num placeholder="912345678"></div></div>
     <div class=actions><button class="btn primary" onclick="sim800cAction('dial',{number:E('#s8num').value})">Ligar</button><button class=btn onclick="sim800cAction('answer')">Atender</button><button class=btn onclick="sim800cAction('hangup')">Desligar</button></div>
-    <h3>SMS</h3><div class=row><div><label>Número</label><input id=s8smsnum placeholder="+351..."></div><div><label>Mensagem</label><input id=s8smstext placeholder="Mensagem"></div></div>
+    <h3>SMS</h3><div class=row><div><label>Número</label><input id=s8smsnum placehlder="+351..."></div><div><label>Mensagem</label><input id=s8smstext placeholder="Mensagem"></div></div>
     <div class=actions><button class="btn primary" onclick="sim800cAction('sms',{number:E('#s8smsnum').value,text:E('#s8smstext').value})">Enviar SMS</button></div>
     <h3>SMS recebidos</h3>${sms}
     <details><summary>Eventos AT recentes</summary><pre>${esc((st.recent_events||[]).map(x=>x.line).join('\n'))}</pre></details>
@@ -70,6 +70,40 @@ async function sim800cAction(action,extra={}){
   if(!r.ok&&r.output) alert(r.output); else if(r.warning) alert(r.warning);
   await sim800c(E('#app'));
 }
+
+/* Shared GSM preference used by Home Assistant SMS routing.
+   The tabs stay separate. Saving one of them makes that gateway the preferred
+   gateway, while the other may be used only as fallback. */
+function gsmSharedConfig(){
+  let s=pbx.gsm_shared||{};
+  let preferred=['usb_gsm','sim800'].includes(String(s.preferred_gateway||''))?String(s.preferred_gateway):'usb_gsm';
+  return {preferred_gateway:preferred,fallback:s.fallback!==false};
+}
+function gsmSharedGatewayLabel(value){
+  return value==='sim800'?'SIM800':'USB/GSM';
+}
+function gsmSharedDecorate(a,tabGateway){
+  if(!a||!a.firstElementChild) return;
+  let s=gsmSharedConfig();
+  let active=s.preferred_gateway===tabGateway;
+  let box=document.createElement('div');
+  box.className='note';
+  box.innerHTML=`<b>Prioridade GSM partilhada:</b> ${esc(gsmSharedGatewayLabel(s.preferred_gateway))} ${active?'<span class="pill">ESTA ABA</span>':''}<br><span class=sub>Ao guardares esta aba, ${esc(gsmSharedGatewayLabel(tabGateway))} passa a ser a prioridade usada pelo Home Assistant.</span><div class=row><div><label>Fallback para a outra interface</label><select id=gsmSharedFallback><option value=1 ${s.fallback?'selected':''}>Sim</option><option value=0 ${s.fallback?'':'selected'}>Não</option></select></div></div>`;
+  a.firstElementChild.insertBefore(box,a.firstElementChild.children[1]||null);
+}
+function gsmSharedSavePreference(gateway){
+  let fallback=E('#gsmSharedFallback');
+  let old=gsmSharedConfig();
+  pbx.gsm_shared={...(pbx.gsm_shared||{}),preferred_gateway:gateway,fallback:fallback?fallback.value==='1':old.fallback};
+}
+const _gsmSharedBaseGsm=gsm;
+gsm=async function(a){await _gsmSharedBaseGsm(a);gsmSharedDecorate(a,'usb_gsm');};
+const _gsmSharedBaseSim800c=sim800c;
+sim800c=async function(a){await _gsmSharedBaseSim800c(a);gsmSharedDecorate(a,'sim800');};
+const _gsmSharedBaseSaveDongles=saveDongles;
+saveDongles=async function(){gsmSharedSavePreference('usb_gsm');return await _gsmSharedBaseSaveDongles();};
+const _gsmSharedBaseSaveSIM800C=saveSIM800C;
+saveSIM800C=async function(){gsmSharedSavePreference('sim800');return await _gsmSharedBaseSaveSIM800C();};
 '''
         index = index.replace('</script>', js + '\n</script>', 1)
     return index

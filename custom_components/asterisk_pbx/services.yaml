@@ -1,0 +1,40 @@
+send_sms:
+  name: Enviar SMS
+  description: Envia um SMS pelo Asterisk PBX usando a prioridade GSM partilhada ou um gateway específico.
+  fields:
+    number:
+      name: Número
+      description: Número de destino, de preferência em formato internacional (ex. +3519XXXXXXXX).
+      required: true
+      example: "+351912345678"
+      selector:
+        text:
+    message:
+      name: Mensagem
+      description: Texto do SMS.
+      required: true
+      example: "Alarme da garagem ativado"
+      selector:
+        text:
+          multiline: true
+    gateway:
+      name: Gateway
+      description: Auto respeita a prioridade gravada pela última aba GSM configurada e usa fallback se estiver ativo.
+      required: false
+      default: auto
+      selector:
+        select:
+          options:
+            - label: Automático
+              value: auto
+            - label: USB/GSM (chan_dongle)
+              value: usb_gsm
+            - label: SIM800
+              value: sim800
+    device:
+      name: Dispositivo USB/GSM
+      description: Nome do dongle (ex. dongle0). Só é necessário para escolher manualmente um Huawei específico.
+      required: false
+      example: dongle0
+      selector:
+        text:
