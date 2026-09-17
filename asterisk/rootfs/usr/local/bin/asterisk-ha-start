@@ -62,6 +62,10 @@ for f in /etc/asterisk-template/*; do
 done
 
 python3 "$APP/bootstrap.py"
+# extensions.conf is persistent across add-on upgrades. Older installations may
+# predate IVR support and therefore miss the generated IVR context include.
+# Add it idempotently before Asterisk starts without rewriting user dialplan.
+python3 "$APP/ivr_dialplan_migration.py"
 # extensions.conf is persistent across add-on upgrades. Always inject/update the
 # dedicated wake-up playback context before Asterisk starts so old installs get
 # the same media fix as fresh installs.
