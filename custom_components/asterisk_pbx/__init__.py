@@ -13,23 +13,58 @@ from .api import AsteriskApi
 from .const import CONF_SCAN_INTERVAL, DEFAULT_SCAN_INTERVAL, DOMAIN, PLATFORMS
 from .coordinator import AsteriskCoordinator
 
+GATEWAYS = ["auto", "usb_gsm", "sim800"]
+FIXED_GATEWAYS = ["usb_gsm", "sim800"]
+
 SERVICE_SEND_SMS = "send_sms"
+SERVICE_SEND_USSD = "send_ussd"
+SERVICE_SET_GSM_PRIORITY = "set_gsm_priority"
+
 SEND_SMS_SCHEMA = vol.Schema(
     {
         vol.Required("number"): cv.string,
         vol.Required("message"): cv.string,
-        vol.Optional("gateway", default="auto"): vol.In(["auto", "usb_gsm", "sim800"]),
+        vol.Optional("gateway", default="auto"): vol.In(GATEWAYS),
         vol.Optional("device", default=""): cv.string,
     }
 )
 
+SEND_USSD_SCHEMA = vol.Schema(
+    {
+        vol.Required("code"): cv.string,
+        vol.Optional("gateway", default="auto"): vol.In(GATEWAYS),
+        vol.Optional("device", default=""): cv.string,
+    }
+)
 
-async def _async_handle_send_sms(hass: HomeAssistant, call: ServiceCall) -> None:
+SET_GSM_PRIORITY_SCHEMA = vol.Schema(
+    {
+        vol.Required("sms_preferred", default="usb_gsm"): vol.In(FIXED_GATEWAYS),
+        vol.Required("ussd_preferred", default="usb_gsm"): vol.In(FIXED_GATEWAYS),
+        vol.Required("fallback", default=True): cv.boolean,
+    }
+)
+
+
+def _first_coordinator(hass: HomeAssistant) -> AsteriskCoordinator:
     coordinators = hass.data.get(DOMAIN, {})
     if not coordinators:
         raise HomeAssistantError("Asterisk PBX não está configurado")
+    return next(iter(coordinators.values()))
 
-    coordinator = next(iter(coordinators.values()))
+
+def _attempt_detail(result: dict) -> str:
+    attempts = result.get("attempts") or []
+    if attempts:
+        return "; ".join(
+            f"{item.get('gateway')}: {item.get('output') or 'falhou'}"
+            for item in attempts
+        )
+    return str(result.get("output") or result.get("error") or "Falha desconhecida")
+
+
+async def _async_handle_send_sms(hass: HomeAssistant, call: ServiceCall) -> None:
+    coordinator = _first_coordinator(hass)
     try:
         result = await coordinator.api.async_send_sms(
             call.data["number"],
@@ -38,18 +73,52 @@ async def _async_handle_send_sms(hass: HomeAssistant, call: ServiceCall) -> None
             call.data.get("device", ""),
         )
     except Exception as err:
-        raise HomeAssistantError(f"Falha ao enviar SMS pelo Asterisk PBX: {err}") from err
+        raise HomeAssistantError(
+            f"Falha ao enviar SMS pelo Asterisk PBX: {err}"
+        ) from err
 
     if not result.get("ok"):
-        attempts = result.get("attempts") or []
-        detail = str(result.get("output") or "Falha desconhecida")
-        if attempts:
-            summary = "; ".join(
-                f"{item.get('gateway')}: {item.get('output') or 'falhou'}" for item in attempts
-            )
-            detail = summary or detail
-        raise HomeAssistantError(f"SMS não enviado: {detail}")
+        raise HomeAssistantError(f"SMS não enviado: {_attempt_detail(result)}")
+    hass.async_create_task(coordinator.async_request_refresh())
 
+
+async def _async_handle_send_ussd(hass: HomeAssistant, call: ServiceCall) -> None:
+    coordinator = _first_coordinator(hass)
+    try:
+        result = await coordinator.api.async_send_ussd(
+            call.data["code"],
+            call.data.get("gateway", "auto"),
+            call.data.get("device", ""),
+        )
+    except Exception as err:
+        raise HomeAssistantError(
+            f"Falha ao executar USSD pelo Asterisk PBX: {err}"
+        ) from err
+
+    if not result.get("ok"):
+        raise HomeAssistantError(f"USSD falhou: {_attempt_detail(result)}")
+    hass.async_create_task(coordinator.async_request_refresh())
+
+
+async def _async_handle_set_gsm_priority(
+    hass: HomeAssistant, call: ServiceCall
+) -> None:
+    coordinator = _first_coordinator(hass)
+    try:
+        result = await coordinator.api.async_set_gsm_priority(
+            call.data["sms_preferred"],
+            call.data["ussd_preferred"],
+            call.data["fallback"],
+        )
+    except Exception as err:
+        raise HomeAssistantError(
+            f"Falha ao guardar prioridade GSM: {err}"
+        ) from err
+
+    if not result.get("ok"):
+        raise HomeAssistantError(
+            f"Prioridade GSM não guardada: {_attempt_detail(result)}"
+        )
     hass.async_create_task(coordinator.async_request_refresh())
 
 
@@ -76,6 +145,28 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             handle_send_sms,
             schema=SEND_SMS_SCHEMA,
         )
+
+    if not hass.services.has_service(DOMAIN, SERVICE_SEND_USSD):
+        async def handle_send_ussd(call: ServiceCall) -> None:
+            await _async_handle_send_ussd(hass, call)
+
+        hass.services.async_register(
+            DOMAIN,
+            SERVICE_SEND_USSD,
+            handle_send_ussd,
+            schema=SEND_USSD_SCHEMA,
+        )
+
+    if not hass.services.has_service(DOMAIN, SERVICE_SET_GSM_PRIORITY):
+        async def handle_set_gsm_priority(call: ServiceCall) -> None:
+            await _async_handle_set_gsm_priority(hass, call)
+
+        hass.services.async_register(
+            DOMAIN,
+            SERVICE_SET_GSM_PRIORITY,
+            handle_set_gsm_priority,
+            schema=SET_GSM_PRIORITY_SCHEMA,
+        )
     return True
 
 
@@ -83,6 +174,12 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     unloaded = await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
     if unloaded:
         hass.data.get(DOMAIN, {}).pop(entry.entry_id, None)
-        if not hass.data.get(DOMAIN) and hass.services.has_service(DOMAIN, SERVICE_SEND_SMS):
-            hass.services.async_remove(DOMAIN, SERVICE_SEND_SMS)
+        if not hass.data.get(DOMAIN):
+            for service in (
+                SERVICE_SEND_SMS,
+                SERVICE_SEND_USSD,
+                SERVICE_SET_GSM_PRIORITY,
+            ):
+                if hass.services.has_service(DOMAIN, service):
+                    hass.services.async_remove(DOMAIN, service)
     return unloaded
