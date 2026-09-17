@@ -4,10 +4,12 @@ from http.server import ThreadingHTTPServer
 import server_entry as app
 from ivr_return import install as install_ivr_return
 from management_runtime import install as install_management_runtime
+from gsm_gateway_runtime import install as install_gsm_gateway_runtime
 
 
 install_ivr_return(app.server)
 install_management_runtime(app)
+install_gsm_gateway_runtime(app)
 
 
 if __name__ == '__main__':
