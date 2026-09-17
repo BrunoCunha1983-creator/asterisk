@@ -32,8 +32,6 @@ def augment_index(index):
         index = index.replace(old_scan, new_scan, 1)
 
     # Converting between stable IDs and ttyUSBx must work in both directions.
-    # Previously switching "Fixar portas" off could leave a /dev/serial/by-id
-    # value selected in manual mode instead of resolving it back to ttyUSBx.
     old_canonical = """function gsmCanonicalPort(value,locked){\n  value=String(value||'');\n  if(!locked) return value;\n  let p=gsmPortForValue(value);\n  return p?gsmStablePath(p):value;\n}"""
     new_canonical = """function gsmCanonicalPort(value,locked){\n  value=String(value||'');\n  let p=gsmPortForValue(value);\n  if(!p) return value;\n  return locked?gsmStablePath(p):String(p.device||value);\n}"""
     if old_canonical in index:
@@ -80,7 +78,7 @@ async function switchHuawei1505Unified(){
 
     # Changing lock mode used to redraw from pbx.json and discard unsaved edits.
     index = index.replace(
-        'onchange="gsm(E(\'#app\'))"',
+        "onchange=\"gsm(E('#app'))\"",
         'onchange="gsmLockChange()"',
     )
     index = index.replace(
@@ -95,8 +93,7 @@ async function switchHuawei1505Unified(){
     )
 
     # Add unified USB/modeswitch status variables beside the existing Huawei
-    # detection. Diagnostic entries from the HAOS/Supervisor detector are also
-    # surfaced instead of silently disappearing from the UI.
+    # detection. Diagnostic entries from HAOS/Supervisor are surfaced too.
     old_huawei = """  let huawei1505=rawUsb.find(p=>String(p.usb_id||'').toLowerCase()==='12d1:1505');"""
     new_huawei = """  let huawei1505=rawUsb.find(p=>String(p.usb_id||'').toLowerCase()==='12d1:1505');\n  let diagnostics=(ports||[]).filter(p=>p.kind==='diagnostic');\n  let diagnosticNote=diagnostics.length?`<div class=note><b>Diagnóstico USB:</b> ${esc(JSON.stringify(diagnostics.map(x=>x.diagnostic||{})))}</div>`:'';\n  let canModeSwitch=!!(usb.huawei_1505_present&&usb.usb_modeswitch_installed&&usb.config_12d1_1505);\n  let modeButton=usb.huawei_1505_present?`<button class=\"btn ${canModeSwitch?'primary':''}\" ${canModeSwitch?'':'disabled'} onclick=\"switchHuawei1505Unified()\">Mudar Huawei 12d1:1505 para modo modem</button>`:'';"""
     if old_huawei in index:
