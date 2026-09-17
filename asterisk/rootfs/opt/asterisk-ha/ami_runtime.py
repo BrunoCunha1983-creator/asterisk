@@ -34,6 +34,24 @@ class AsteriskAMI:
         }
 
     @staticmethod
+    def _recv_banner(sock, timeout=3.0):
+        """Read the AMI greeting line.
+
+        Asterisk sends `Asterisk Call Manager/x.y.z\r\n` as a single greeting
+        line, not as a normal AMI frame terminated by CRLF-CRLF. Treating the
+        greeting as a frame made the previous health probe time out even while
+        authenticated AMI clients were connected.
+        """
+        sock.settimeout(timeout)
+        data = bytearray()
+        while b'\r\n' not in data and len(data) < 4096:
+            chunk = sock.recv(512)
+            if not chunk:
+                break
+            data.extend(chunk)
+        return data.decode(errors='replace')
+
+    @staticmethod
     def _recv_frame(sock, timeout=3.0):
         sock.settimeout(timeout)
         data = bytearray()
@@ -62,7 +80,9 @@ class AsteriskAMI:
             return {**base, 'ok': False, 'error': 'AMI password not initialized'}
         try:
             with socket.create_connection((cfg['host'], cfg['port']), timeout=3) as sock:
-                banner = self._recv_frame(sock)
+                banner = self._recv_banner(sock)
+                if 'Asterisk Call Manager' not in banner:
+                    return {**base, 'ok': False, 'error': 'Invalid AMI banner', 'banner': banner.strip()[:200]}
                 self._send_action(sock, {
                     'Action': 'Login',
                     'Username': cfg['username'],
@@ -80,7 +100,7 @@ class AsteriskAMI:
                     pass
                 return {
                     **base,
-                    'ok': 'Response: Success' in response,
+                    'ok': 'Response: Success' in response and ('Ping: Pong' in response or 'Pong' in response),
                     'banner': banner.strip()[:200],
                     'response': response[-2000:],
                 }
