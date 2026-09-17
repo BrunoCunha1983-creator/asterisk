@@ -26,6 +26,14 @@ def _valid_network(value):
         return ''
 
 
+def _rtp_port(value, default):
+    try:
+        value = int(value)
+    except Exception:
+        value = default
+    return max(1024, min(65535, value))
+
+
 def detect_local_ip():
     s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     try:
@@ -44,7 +52,7 @@ def detect_public_ip(timeout=4):
     )
     for url in services:
         try:
-            req = urllib.request.Request(url, headers={'User-Agent': 'Asterisk-HA/0.2.6'})
+            req = urllib.request.Request(url, headers={'User-Agent': 'Asterisk-HA/0.2.42'})
             with urllib.request.urlopen(req, timeout=timeout) as r:
                 value = _valid_ip(r.read(128).decode(errors='ignore').strip())
                 if value:
@@ -77,6 +85,12 @@ def resolve_nat(options):
         external, detect_url = detect_public_ip()
         if external:
             source = 'auto'
+
+    rtp_start = _rtp_port(options.get('rtp_start'), 10000)
+    rtp_end = _rtp_port(options.get('rtp_end'), 20000)
+    if rtp_end < rtp_start:
+        rtp_start, rtp_end = rtp_end, rtp_start
+
     return {
         'nat_auto': bool(options.get('nat_auto', True)),
         'local_ip': local_ip,
@@ -85,8 +99,8 @@ def resolve_nat(options):
         'external_source': source or 'none',
         'detect_url': detect_url,
         'sip_port': int(options.get('sip_port', 5060) or 5060),
-        'rtp_start': int(options.get('rtp_start', 10000) or 10000),
-        'rtp_end': int(options.get('rtp_end', 20000) or 20000),
+        'rtp_start': rtp_start,
+        'rtp_end': rtp_end,
     }
 
 
@@ -139,27 +153,91 @@ def patch_transport(path, nat):
         out.append(line)
     if in_transport:
         add_nat_lines()
-    path.write_text('\n'.join(out).rstrip() + '\n')
+    new = '\n'.join(out).rstrip() + '\n'
+    if new != text:
+        path.write_text(new)
+        return True
+    return False
 
 
-def patch_rtp(path):
+def patch_rtp(path, nat):
+    """Synchronize the persistent rtp.conf with add-on RTP port settings."""
     path = Path(path)
     if not path.exists():
-        return
-    lines = []
-    for line in path.read_text(errors='ignore').splitlines():
-        stripped = line.strip().lower()
-        if stripped == 'stunaddr=':
+        return False
+
+    text = path.read_text(errors='ignore')
+    lines = text.splitlines()
+    start = int(nat.get('rtp_start', 10000) or 10000)
+    end = int(nat.get('rtp_end', 20000) or 20000)
+
+    out = []
+    in_general = False
+    have_general = False
+    wrote_start = False
+    wrote_end = False
+
+    def finish_general():
+        nonlocal wrote_start, wrote_end
+        if not wrote_start:
+            out.append(f'rtpstart={start}')
+            wrote_start = True
+        if not wrote_end:
+            out.append(f'rtpend={end}')
+            wrote_end = True
+
+    for line in lines:
+        stripped = line.strip()
+        if stripped.startswith('[') and stripped.endswith(']'):
+            if in_general:
+                finish_general()
+            in_general = stripped.lower() == '[general]'
+            if in_general:
+                have_general = True
+            out.append(line)
             continue
-        lines.append(line)
-    path.write_text('\n'.join(lines).rstrip() + '\n')
+
+        if in_general and '=' in stripped:
+            key = stripped.split('=', 1)[0].strip().lower()
+            if key == 'rtpstart':
+                if not wrote_start:
+                    out.append(f'rtpstart={start}')
+                    wrote_start = True
+                continue
+            if key == 'rtpend':
+                if not wrote_end:
+                    out.append(f'rtpend={end}')
+                    wrote_end = True
+                continue
+            # Blank STUN configuration is unnecessary and can interfere with
+            # clear NAT diagnostics. Preserve non-empty STUN configuration.
+            if key == 'stunaddr' and not stripped.split('=', 1)[1].strip():
+                continue
+        out.append(line)
+
+    if in_general:
+        finish_general()
+
+    if not have_general:
+        out = [
+            '[general]',
+            f'rtpstart={start}',
+            f'rtpend={end}',
+            '',
+        ] + out
+
+    new = '\n'.join(out).rstrip() + '\n'
+    if new != text:
+        path.write_text(new)
+        return True
+    return False
 
 
 def apply_nat(conf_dir, options):
     conf_dir = Path(conf_dir)
     nat = resolve_nat(options)
-    patch_transport(conf_dir / 'pjsip.conf', nat)
-    patch_rtp(conf_dir / 'rtp.conf')
+    nat['transport_config_updated'] = bool(patch_transport(conf_dir / 'pjsip.conf', nat))
+    nat['rtp_config_updated'] = bool(patch_rtp(conf_dir / 'rtp.conf', nat))
     STATE.mkdir(parents=True, exist_ok=True)
     STATUS.write_text(json.dumps(nat, indent=2, ensure_ascii=False))
     return nat
