@@ -3,9 +3,11 @@ from http.server import ThreadingHTTPServer
 
 import server_entry as app
 from ivr_return import install as install_ivr_return
+from management_runtime import install as install_management_runtime
 
 
 install_ivr_return(app.server)
+install_management_runtime(app)
 
 
 if __name__ == '__main__':
