@@ -49,6 +49,9 @@ def patch_http_websocket(path, options):
     key = Path('/ssl/privkey.pem')
     tls_ok = cert.exists() and key.exists()
 
+    # websocket_enabled is not an Asterisk 22 http.conf option. WebSocket support
+    # is provided by res_http_websocket once the HTTP server is enabled, so remove
+    # any legacy managed key but do not write it back.
     managed_keys = {
         'bindaddr', 'bindport', 'websocket_enabled',
         'tlsenable', 'tlsbindaddr', 'tlscertfile', 'tlsprivatekey'
@@ -65,7 +68,6 @@ def patch_http_websocket(path, options):
             'enabled=yes',
             'bindaddr=0.0.0.0',
             f'bindport={ws_port}',
-            'websocket_enabled=yes',
             f'tlsenable={"yes" if tls_ok else "no"}',
         ])
         if tls_ok:
