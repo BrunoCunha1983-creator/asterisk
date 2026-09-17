@@ -47,9 +47,12 @@ def patch_generated_ivrs(conf, data):
                     match.group(1).rstrip('\n'),
                     f' same => n,Dial(PJSIP/{number},45)',
                     f' same => n,NoOp(IVR {ivr_id} destination {number}: DIALSTATUS=${{DIALSTATUS}} HANGUPCAUSE=${{HANGUPCAUSE}})',
-                    # Q.850 cause 21 = Call Rejected. Only an explicit rejection
-                    # returns to the IVR. Busy, unavailable and no-answer must
-                    # continue to the selected extension voicemail.
+                    # An unavailable endpoint must return to the IVR so the
+                    # caller can immediately choose another destination.
+                    ' same => n,GotoIf($["${DIALSTATUS}"="CHANUNAVAIL"]?return-menu)',
+                    # Q.850 cause 21 = Call Rejected. Explicit rejection also
+                    # returns to the IVR. NOANSWER/BUSY/CONGESTION continue to
+                    # the selected extension voicemail.
                     ' same => n,GotoIf($["${HANGUPCAUSE}"="21"]?return-menu)',
                     # If the call was answered, never fall through to voicemail
                     # when the bridge ends normally.
@@ -86,7 +89,7 @@ def install(server_module):
         try:
             info = patch_generated_ivrs(conf, data)
             if info['patched']:
-                print(f"[IVR] explicit-reject return-to-menu enabled for {info['patched']} extension option(s)")
+                print(f"[IVR] reject/CHANUNAVAIL return-to-menu enabled for {info['patched']} extension option(s)")
             if info['missing']:
                 print('[IVR] WARNING return-to-menu not applied: ' + ', '.join(info['missing']))
         except Exception as exc:
