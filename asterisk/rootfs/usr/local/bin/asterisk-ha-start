@@ -162,7 +162,9 @@ else
 fi
 
 # Keep the UI available even if Asterisk fails; diagnostics can then be used.
-python3 "$APP/server_entry.py" &
+# The runtime wrapper adds IVR return-to-menu handling without changing normal
+# extension-to-extension dialing semantics.
+python3 "$APP/server_entry_runtime.py" &
 UI_PID=$!
 
 VERBOSE="$(python3 - <<'PY'
