@@ -1,6 +1,6 @@
 send_sms:
   name: Enviar SMS
-  description: Envia um SMS pelo Asterisk PBX usando a prioridade GSM partilhada ou um gateway específico.
+  description: Envia um SMS pelo Asterisk PBX. Em Automático, o PBX escolhe USB/GSM ou SIM800 pela prioridade guardada e pode usar fallback.
   fields:
     number:
       name: Número
@@ -19,7 +19,7 @@ send_sms:
           multiline: true
     gateway:
       name: Gateway
-      description: Auto respeita a prioridade gravada pela última aba GSM configurada e usa fallback se estiver ativo.
+      description: Auto deixa o Asterisk PBX escolher pela prioridade GSM configurada.
       required: false
       default: auto
       selector:
@@ -33,8 +33,75 @@ send_sms:
               value: sim800
     device:
       name: Dispositivo USB/GSM
-      description: Nome do dongle (ex. dongle0). Só é necessário para escolher manualmente um Huawei específico.
+      description: Nome de um dongle específico, por exemplo dongle0. Deixa vazio para seleção automática.
       required: false
       example: dongle0
       selector:
         text:
+
+send_ussd:
+  name: Executar USSD
+  description: Executa um código USSD pelo gateway GSM escolhido ou pela prioridade automática do Asterisk PBX.
+  fields:
+    code:
+      name: Código USSD
+      description: Código como *#100# ou *123#.
+      required: true
+      example: "*#100#"
+      selector:
+        text:
+    gateway:
+      name: Gateway
+      description: Auto usa a prioridade USSD guardada no Asterisk PBX.
+      required: false
+      default: auto
+      selector:
+        select:
+          options:
+            - label: Automático
+              value: auto
+            - label: USB/GSM (chan_dongle)
+              value: usb_gsm
+            - label: SIM800
+              value: sim800
+    device:
+      name: Dispositivo USB/GSM
+      description: Nome de um dongle específico. Deixa vazio para seleção automática.
+      required: false
+      example: dongle0
+      selector:
+        text:
+
+set_gsm_priority:
+  name: Definir prioridade GSM
+  description: Define separadamente o gateway preferido para SMS e USSD e se o PBX pode usar o outro gateway como fallback.
+  fields:
+    sms_preferred:
+      name: Prioridade SMS
+      required: true
+      default: usb_gsm
+      selector:
+        select:
+          options:
+            - label: USB/GSM (chan_dongle)
+              value: usb_gsm
+            - label: SIM800
+              value: sim800
+    ussd_preferred:
+      name: Prioridade USSD
+      required: true
+      default: usb_gsm
+      selector:
+        select:
+          options:
+            - label: USB/GSM (chan_dongle)
+              value: usb_gsm
+            - label: SIM800
+              value: sim800
+    fallback:
+      name: Usar fallback
+      description: Se o gateway preferido falhar, tenta automaticamente o outro.
+      required: true
+      default: true
+      selector:
+        boolean:
