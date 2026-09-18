@@ -194,7 +194,7 @@ if modules.exists():
             'res_hep.so','res_hep_pjsip.so','res_hep_rtcp.so',
             'res_phoneprov.so','res_pjsip_phoneprov_provider.so',
             'res_stun_monitor.so','res_geolocation.so','res_pjsip_geolocation.so',
-            'res_statsd.so','res_aeap.so','chan_websocket.so','res_websocket_client.so',
+            'res_statsd.so','res_aeap.so','chan_websocket.so',
             'res_clialiases.so','app_minivm.so','res_smdi.so','res_calendar.so',
             'app_agent_pool.so','res_config_sqlite3.so','cdr_sqlite3_custom.so',
             'cel_sqlite3_custom.so','chan_unistim.so','pbx_dundi.so','app_amd.so',
