@@ -25,6 +25,19 @@ def install(app):
                     out['http_runtime'] = http_runtime.get('output', '')
                     out['ari_runtime'] = ari_runtime.get('output', '')
                     out['ari_users'] = ari_users.get('output', '')
+                    module_reports = []
+                    for module_name in (
+                        'res_websocket_client.so',
+                        'res_http_websocket.so',
+                        'res_stasis.so',
+                        'res_ari.so',
+                        'res_ari_asterisk.so',
+                    ):
+                        result = app.server.ast(f'module show like {module_name}')
+                        module_reports.append(
+                            f'$ module show like {module_name}\n{result.get("output", "")}'.rstrip()
+                        )
+                    out['ari_modules'] = '\n\n'.join(module_reports)
                     self.sendj(out)
                 except Exception as exc:
                     self.sendj({'connected': False, 'error': str(exc), 'password_exposed': False}, 500)
