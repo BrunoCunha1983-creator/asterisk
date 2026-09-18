@@ -32,6 +32,7 @@ async function ari(a){
     <h3>Estado HTTP runtime</h3><pre>${esc(st.http_runtime||'')}</pre>
     <h3>Estado ARI runtime</h3><pre>${esc(st.ari_runtime||'')}</pre>
     <h3>Utilizadores ARI runtime</h3><pre>${esc(st.ari_users||'')}</pre>
+    <h3>Módulos necessários ARI</h3><pre>${esc(st.ari_modules||'')}</pre>
     <div class=note><b>Segurança:</b> não encaminhes a porta HTTP/ARI ${esc(st.port||8088)} diretamente para a Internet. Para acesso remoto usa LAN/VPN/Tailscale/reverse proxy autenticado conforme o caso.</div>
   </div>`;
 }
