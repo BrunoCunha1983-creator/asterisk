@@ -29,14 +29,15 @@ for p in CONF.glob('*.conf'):
     for k,v in repls.items(): text=text.replace(k,v)
     if text!=old: p.write_text(text)
 
-# Keep the Asterisk control socket available because the WebGUI, watchdogs and
-# diagnostics use "asterisk -rx" internally. The user-facing option controls
-# only the noisy "Remote UNIX connection" connect/disconnect messages.
+# Keep the Asterisk UNIX control socket available: the WebGUI, watchdogs and
+# diagnostics use "asterisk -rx" internally. The option below controls only the
+# noisy connect/disconnect messages written when those local commands run.
 asterisk_conf=CONF/'asterisk.conf'
 if asterisk_conf.exists():
     text=asterisk_conf.read_text(errors='ignore')
     show_unix=bool(options.get('show_unix_cli_connections', False))
     wanted_hide='no' if show_unix else 'yes'
+
     def set_ast_option(src, key, value):
         pattern=rf'(?im)^\s*{re.escape(key)}\s*=.*
 # Browser softphones need Asterisk HTTP WebSocket plus PJSIP WS/WSS transports.
@@ -155,10 +156,14 @@ if modules.exists():
         '', text
     )
     lines=text.splitlines()
+
+    # These are explicitly controlled by add-on options rather than autoload.
     managed=('chan_dongle.so','chan_iax2.so')
     lines=[
         line for line in lines
-        if not any(re.match(rf'^\s*(?:load|noload)\s*=>\s*{re.escape(mod)}\s*
+        if not any(
+            re.match(
+                rf'^\s*(?:load|noload)\s*=>\s*{re.escape(module)}\s*
 cdr=CONF/'cdr.conf'
 if cdr.exists():
     text=cdr.read_text(errors='ignore')
@@ -167,8 +172,8 @@ if cdr.exists():
             if text and not text.endswith('\n'): f.write('\n')
             f.write('\n[csv]\nusegmtime=no\nloguniqueid=yes\nloguserfield=yes\naccountlogs=yes\nnewcdrcolumns=yes\n')
 
-# Asterisk 22's advanced CEL field names use Name/Num rather than the old
-# CIDName/CIDNum aliases. Migrate persistent installs so CEL starts cleanly.
+# Asterisk 22 advanced CEL field names use Name/Num rather than the legacy
+# CIDName/CIDNum aliases. Migrate persistent installations in place.
 cel_custom=CONF/'cel_custom.conf'
 if cel_custom.exists():
     cel_text=cel_custom.read_text(errors='ignore')
@@ -217,7 +222,7 @@ else:
         line=f'{key} = {value}'
         if re.search(pattern, src):
             return re.sub(pattern, line, src, count=1)
-        m=re.search(r'(?im)^\s*\[options\]\s*
+        match=re.search(r'(?im)^\s*\[options\]\s*
 # Browser softphones need Asterisk HTTP WebSocket plus PJSIP WS/WSS transports.
 # Existing installs keep /config/asterisk, so this is a runtime migration and
 # not only a template change. WSS is enabled automatically when HA SSL files
@@ -377,14 +382,18 @@ else:
     except Exception:
         pass
 , src)
-        if not m:
+        if not match:
             return src.rstrip()+f'\n\n[options]\n{line}\n'
-        insert=m.end()
-        return src[:insert]+f'\n{line}'+src[insert:]
+        pos=match.end()
+        return src[:pos]+f'\n{line}'+src[pos:]
+
     text=set_ast_option(text, 'hideconnect', wanted_hide)
+    # Do not allow "!shell-command" from remote Asterisk consoles.
     text=set_ast_option(text, 'disable_remote_console_shell', 'yes')
     asterisk_conf.write_text(text.rstrip()+'\n')
-    print('[CLI] UNIX control socket enabled; connection messages %s' % ('shown' if show_unix else 'hidden'))
+    print('[CLI] UNIX control socket enabled; connection messages %s' % (
+        'shown' if show_unix else 'hidden'
+    ))
 
 # Browser softphones need Asterisk HTTP WebSocket plus PJSIP WS/WSS transports.
 # Existing installs keep /config/asterisk, so this is a runtime migration and
@@ -544,7 +553,11 @@ else:
         if changed: pbx.write_text(json.dumps(data,indent=2,ensure_ascii=False))
     except Exception:
         pass
-, line, re.I) for mod in managed)
+,
+                line, re.I
+            )
+            for module in managed
+        )
     ]
     if not any(re.match(r'^\s*noload\s*=>\s*chan_sip\.so\s*
 cdr=CONF/'cdr.conf'
@@ -594,7 +607,7 @@ else:
         line=f'{key} = {value}'
         if re.search(pattern, src):
             return re.sub(pattern, line, src, count=1)
-        m=re.search(r'(?im)^\s*\[options\]\s*
+        match=re.search(r'(?im)^\s*\[options\]\s*
 # Browser softphones need Asterisk HTTP WebSocket plus PJSIP WS/WSS transports.
 # Existing installs keep /config/asterisk, so this is a runtime migration and
 # not only a template change. WSS is enabled automatically when HA SSL files
@@ -754,14 +767,18 @@ else:
     except Exception:
         pass
 , src)
-        if not m:
+        if not match:
             return src.rstrip()+f'\n\n[options]\n{line}\n'
-        insert=m.end()
-        return src[:insert]+f'\n{line}'+src[insert:]
+        pos=match.end()
+        return src[:pos]+f'\n{line}'+src[pos:]
+
     text=set_ast_option(text, 'hideconnect', wanted_hide)
+    # Do not allow "!shell-command" from remote Asterisk consoles.
     text=set_ast_option(text, 'disable_remote_console_shell', 'yes')
     asterisk_conf.write_text(text.rstrip()+'\n')
-    print('[CLI] UNIX control socket enabled; connection messages %s' % ('shown' if show_unix else 'hidden'))
+    print('[CLI] UNIX control socket enabled; connection messages %s' % (
+        'shown' if show_unix else 'hidden'
+    ))
 
 # Browser softphones need Asterisk HTTP WebSocket plus PJSIP WS/WSS transports.
 # Existing installs keep /config/asterisk, so this is a runtime migration and
@@ -926,6 +943,9 @@ else:
     lines.append(('load' if options.get('chan_dongle', True) else 'noload') + ' => chan_dongle.so')
     lines.append(('load' if options.get('iax_enabled', False) else 'noload') + ' => chan_iax2.so')
 
+    # This PBX does not currently use the following optional Asterisk features.
+    # Not loading them avoids a large number of misleading "missing config"
+    # startup errors. The cleanup can be disabled from the add-on options.
     if options.get('clean_optional_modules', True):
         unused_modules=[
             'res_hep.so','res_hep_pjsip.so','res_hep_rtcp.so',
@@ -938,12 +958,13 @@ else:
             'app_festival.so','app_followme.so','pbx_ael.so','app_alarmreceiver.so',
             'res_adsi.so','app_adsiprog.so','app_getcpeid.so'
         ]
-        lines += [clean_start]
-        lines += [f'noload => {name}' for name in unused_modules]
-        lines += [clean_end]
+        lines.append(clean_start)
+        lines.extend(f'noload => {name}' for name in unused_modules)
+        lines.append(clean_end)
         print(f'[MODULES] optional cleanup enabled: {len(unused_modules)} unused modules disabled')
     else:
         print('[MODULES] optional cleanup disabled: normal Asterisk autoload retained')
+
     modules.write_text('\n'.join(lines).rstrip()+'\n')
 
 cdr=CONF/'cdr.conf'
@@ -993,7 +1014,7 @@ else:
         line=f'{key} = {value}'
         if re.search(pattern, src):
             return re.sub(pattern, line, src, count=1)
-        m=re.search(r'(?im)^\s*\[options\]\s*
+        match=re.search(r'(?im)^\s*\[options\]\s*
 # Browser softphones need Asterisk HTTP WebSocket plus PJSIP WS/WSS transports.
 # Existing installs keep /config/asterisk, so this is a runtime migration and
 # not only a template change. WSS is enabled automatically when HA SSL files
@@ -1153,14 +1174,18 @@ else:
     except Exception:
         pass
 , src)
-        if not m:
+        if not match:
             return src.rstrip()+f'\n\n[options]\n{line}\n'
-        insert=m.end()
-        return src[:insert]+f'\n{line}'+src[insert:]
+        pos=match.end()
+        return src[:pos]+f'\n{line}'+src[pos:]
+
     text=set_ast_option(text, 'hideconnect', wanted_hide)
+    # Do not allow "!shell-command" from remote Asterisk consoles.
     text=set_ast_option(text, 'disable_remote_console_shell', 'yes')
     asterisk_conf.write_text(text.rstrip()+'\n')
-    print('[CLI] UNIX control socket enabled; connection messages %s' % ('shown' if show_unix else 'hidden'))
+    print('[CLI] UNIX control socket enabled; connection messages %s' % (
+        'shown' if show_unix else 'hidden'
+    ))
 
 # Browser softphones need Asterisk HTTP WebSocket plus PJSIP WS/WSS transports.
 # Existing installs keep /config/asterisk, so this is a runtime migration and
